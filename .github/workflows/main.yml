@@ -27,8 +27,8 @@ jobs:
       - name: Update Kotlin and Gradle
         run: |
           sed -i 's/ext.kotlin_version = .*/ext.kotlin_version = "1.9.24"/' app/android/build.gradle
-          sed -i 's/com.android.tools.build:gradle:[0-9.]\+/com.android.tools.build:gradle:8.3.2/' app/android/build.gradle
-          sed -i 's/distributionUrl=.*gradle-[0-9.]\+-all.zip/distributionUrl=https\:\/\/services.gradle.org\/distributions\/gradle-8.7-all.zip/' app/android/gradle/wrapper/gradle-wrapper.properties
+          sed -i 's/com.android.tools.build:gradle:[0-9.]*/com.android.tools.build:gradle:8.3.2/' app/android/build.gradle
+          sed -i 's#distributionUrl=.*gradle-[0-9.]\+-all.zip#distributionUrl=https://services.gradle.org/distributions/gradle-8.7-all.zip#' app/android/gradle/wrapper/gradle-wrapper.properties
 
       - name: Build APK
         working-directory: app
