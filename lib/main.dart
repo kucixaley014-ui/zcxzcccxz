@@ -6,7 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:intl/intl.dart';
 
-const SERVER = "https://your-server.example.com"; // <-- Поменяй на URL сервера (PythonAnywhere)
+const SERVER = "https://lol154.pythonanywhere.com"; // <-- Поменяй на URL сервера (PythonAnywhere)
 
 void main() {
   runApp(const ChatApp());
