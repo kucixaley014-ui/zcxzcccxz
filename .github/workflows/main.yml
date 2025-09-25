@@ -24,15 +24,11 @@ jobs:
           cp -r lib app/
           cp pubspec.yaml app/ || true
 
-      - name: Patch Gradle & Kotlin
+      - name: Update Kotlin and Gradle
         run: |
-          sed -i 's/ext.kotlin_version = .*/ext.kotlin_version = "1.9.22"/' app/android/build.gradle || true
-          sed -i 's/com.android.tools.build:gradle:[0-9.]*/com.android.tools.build:gradle:8.1.2/' app/android/build.gradle || true
-          sed -i 's#distributionUrl=.*#distributionUrl=https\://services.gradle.org/distributions/gradle-8.2-bin.zip#' app/android/gradle/wrapper/gradle-wrapper.properties || true
-
-      - name: Get dependencies
-        working-directory: app
-        run: flutter pub get
+          sed -i 's/ext.kotlin_version = .*/ext.kotlin_version = "1.9.24"/' app/android/build.gradle
+          sed -i 's/com.android.tools.build:gradle:[0-9.]\+/com.android.tools.build:gradle:8.3.2/' app/android/build.gradle
+          sed -i 's/distributionUrl=.*gradle-[0-9.]\+-all.zip/distributionUrl=https\:\/\/services.gradle.org\/distributions\/gradle-8.7-all.zip/' app/android/gradle/wrapper/gradle-wrapper.properties
 
       - name: Build APK
         working-directory: app
