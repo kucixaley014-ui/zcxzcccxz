@@ -2,14 +2,13 @@ name: Build Flutter APK
 
 on:
   push:
-    branches: [ main ]
+    branches: [ "main" ]
 
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout repo
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Setup Flutter
@@ -17,17 +16,15 @@ jobs:
         with:
           flutter-version: '3.24.1'
 
-      - name: Install dependencies
+      - name: Get dependencies
         run: flutter pub get
 
-      - name: Ensure Android project exists (v2 embedding)
-        run: flutter create .
-
       - name: Build APK
-        run: flutter build apk --debug
+        run: flutter build apk --release
 
-      - name: Upload APK
-        uses: actions/upload-artifact@v4
+      - name: Upload Release APK
+        uses: softprops/action-gh-release@v2
         with:
-          name: app-debug
-          path: build/app/outputs/flutter-apk/app-debug.apk
+          files: build/app/outputs/flutter-apk/app-release.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
