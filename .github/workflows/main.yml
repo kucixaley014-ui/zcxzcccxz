@@ -24,16 +24,18 @@ jobs:
           cp -r lib app/
           cp pubspec.yaml app/ || true
 
-      - name: Force update Kotlin + Gradle
+      - name: Fix Kotlin & Gradle
         run: |
-          # Обновляем Kotlin в build.gradle
+          # Обновляем Kotlin версию
           sed -i 's/ext.kotlin_version = .*/ext.kotlin_version = "1.9.24"/' app/android/build.gradle || true
+
           # Обновляем Android Gradle Plugin
           sed -i 's/com.android.tools.build:gradle:[0-9.]*/com.android.tools.build:gradle:8.3.2/' app/android/build.gradle || true
+
           # Обновляем gradle-wrapper.properties
           sed -i 's#distributionUrl=.*#distributionUrl=https://services.gradle.org/distributions/gradle-8.7-all.zip#' app/android/gradle/wrapper/gradle-wrapper.properties || true
-          
-          # Если settings.gradle существует — добавим плагин Kotlin
+
+          # Пропишем плагин Kotlin в settings.gradle, если его нет
           if ! grep -q "org.jetbrains.kotlin.android" app/android/settings.gradle; then
             echo 'pluginManagement {' >> app/android/settings.gradle
             echo '  plugins {' >> app/android/settings.gradle
@@ -42,11 +44,15 @@ jobs:
             echo '}' >> app/android/settings.gradle
           fi
 
-      - name: Build APK (release)
+      - name: Clean Gradle
+        working-directory: app/android
+        run: ./gradlew clean
+
+      - name: Build APK (Release)
         working-directory: app
         run: flutter build apk --release
 
-      - name: Upload APK
+      - name: Upload APK (Release)
         uses: actions/upload-artifact@v4
         with:
           name: release-apk
