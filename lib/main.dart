@@ -10,16 +10,24 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Hello Flutter',
-      home: Scaffold(
-        appBar: AppBar(
-          title: const Text('Hello Flutter'),
-        ),
-        body: const Center(
-          child: Text(
-            'Привет, Flutter! 🚀',
-            style: TextStyle(fontSize: 24),
-          ),
+      title: 'Flutter Demo',
+      theme: ThemeData(primarySwatch: Colors.blue),
+      home: const HomePage(),
+    );
+  }
+}
+
+class HomePage extends StatelessWidget {
+  const HomePage({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text("Привет, Flutter!")),
+      body: const Center(
+        child: Text(
+          "Hello from Flutter 🎉",
+          style: TextStyle(fontSize: 24),
         ),
       ),
     );
