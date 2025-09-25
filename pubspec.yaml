@@ -1,6 +1,7 @@
-name: flutter_android_v2
-description: A simple Flutter Android app (embedding v2)
+name: flappy_chat
+description: Simple chat client
 publish_to: 'none'
+version: 0.1.0
 
 environment:
   sdk: ">=3.0.0 <4.0.0"
@@ -8,10 +9,7 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-
-dev_dependencies:
-  flutter_test:
-    sdk: flutter
-
-flutter:
-  uses-material-design: true
+  http: ^0.13.6
+  shared_preferences: ^2.0.15
+  file_picker: ^5.2.2
+  intl: ^0.18.0
