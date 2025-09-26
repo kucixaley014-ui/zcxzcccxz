@@ -24,6 +24,14 @@ jobs:
           cp -r lib app/
           cp pubspec.yaml app/ || true
 
+      - name: Disable ProGuard/R8
+        run: |
+          BUILD_GRADLE="app/android/app/build.gradle"
+          if [ -f "$BUILD_GRADLE" ]; then
+            sed -i 's/minifyEnabled true/minifyEnabled false/g' $BUILD_GRADLE || true
+            sed -i 's/shrinkResources true/shrinkResources false/g' $BUILD_GRADLE || true
+          fi
+
       - name: Build APK
         working-directory: app
         run: flutter build apk --release
