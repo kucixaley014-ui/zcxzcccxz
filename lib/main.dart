@@ -1,170 +1,153 @@
-import 'dart:async';
-import 'dart:math';
 import 'package:flutter/material.dart';
+import 'dart:math';
 
-void main() => runApp(const MyApp());
+void main() {
+  runApp(const TicTacToeApp());
+}
 
-class MyApp extends StatelessWidget {
-  const MyApp({super.key});
+class TicTacToeApp extends StatelessWidget {
+  const TicTacToeApp({super.key});
+
   @override
   Widget build(BuildContext context) {
-    return const MaterialApp(
+    return MaterialApp(
+      title: 'Крестики-нолики',
       debugShowCheckedModeBanner: false,
-      home: FlappyGame(),
+      home: TicTacToeGame(),
     );
   }
 }
 
-class FlappyGame extends StatefulWidget {
-  const FlappyGame({super.key});
+class TicTacToeGame extends StatefulWidget {
   @override
-  State<FlappyGame> createState() => _FlappyGameState();
+  _TicTacToeGameState createState() => _TicTacToeGameState();
 }
 
-class _FlappyGameState extends State<FlappyGame> {
-  double birdY = 0; // Позиция птички по Y (-1 до 1)
-  double velocity = 0; // скорость
-  double gravity = -4.5; // сила падения
-  double boost = 8; // сила прыжка (будет накапливаться)
-  double currentBoost = 0;
-
-  bool holding = false;
-  Timer? gameTimer;
-  Timer? boostTimer;
-
-  // трубы
-  List<double> pipesX = [2, 4];
-  double gapSize = 0.4; // размер дырки между трубами
-  Random rng = Random();
-  List<double> pipeHeights = [0.6, 0.5];
-
+class _TicTacToeGameState extends State<TicTacToeGame> {
+  List<String> board = List.filled(9, '');
   bool gameOver = false;
+  String message = '';
 
-  void startGame() {
-    gameOver = false;
-    birdY = 0;
-    velocity = 0;
-    pipesX = [2, 4];
-    pipeHeights = [0.6, 0.5];
+  final Random _random = Random();
 
-    gameTimer?.cancel();
-    gameTimer = Timer.periodic(const Duration(milliseconds: 30), (timer) {
+  void resetGame() {
+    setState(() {
+      board = List.filled(9, '');
+      gameOver = false;
+      message = '';
+    });
+  }
+
+  void playerMove(int index) {
+    if (board[index] == '' && !gameOver) {
       setState(() {
-        // физика птички
-        birdY -= velocity * 0.02;
-        velocity += gravity * 0.02;
-
-        // движение труб
-        for (int i = 0; i < pipesX.length; i++) {
-          pipesX[i] -= 0.02;
-          if (pipesX[i] < -1.5) {
-            pipesX[i] += 3;
-            pipeHeights[i] = 0.3 + rng.nextDouble() * 0.4;
-          }
-        }
-
-        // проверка на столкновение
-        for (int i = 0; i < pipesX.length; i++) {
-          if (pipesX[i] < 0.2 && pipesX[i] > -0.2) {
-            if (birdY > pipeHeights[i] || birdY < pipeHeights[i] - gapSize) {
-              endGame();
-            }
-          }
-        }
-
-        // если упал или улетел
-        if (birdY < -1 || birdY > 1) {
-          endGame();
-        }
+        board[index] = 'X';
       });
-    });
-  }
-
-  void endGame() {
-    gameTimer?.cancel();
-    boostTimer?.cancel();
-    gameOver = true;
-    setState(() {});
-  }
-
-  void onTapDown() {
-    holding = true;
-    currentBoost = 0;
-    boostTimer?.cancel();
-    boostTimer = Timer.periodic(const Duration(milliseconds: 50), (timer) {
-      if (holding) {
-        setState(() {
-          currentBoost = (currentBoost + 0.5).clamp(0, boost);
-        });
+      checkWinner();
+      if (!gameOver) {
+        botMove();
       }
-    });
+    }
   }
 
-  void onTapUp() {
-    holding = false;
-    velocity = currentBoost;
-    currentBoost = 0;
-    boostTimer?.cancel();
+  void botMove() {
+    List<int> emptyCells = [];
+    for (int i = 0; i < 9; i++) {
+      if (board[i] == '') emptyCells.add(i);
+    }
+    if (emptyCells.isNotEmpty) {
+      int move = emptyCells[_random.nextInt(emptyCells.length)];
+      setState(() {
+        board[move] = 'O';
+      });
+      checkWinner();
+    }
+  }
+
+  void checkWinner() {
+    List<List<int>> winPatterns = [
+      [0, 1, 2],
+      [3, 4, 5],
+      [6, 7, 8],
+      [0, 3, 6],
+      [1, 4, 7],
+      [2, 5, 8],
+      [0, 4, 8],
+      [2, 4, 6],
+    ];
+
+    for (var pattern in winPatterns) {
+      String a = board[pattern[0]];
+      String b = board[pattern[1]];
+      String c = board[pattern[2]];
+      if (a != '' && a == b && b == c) {
+        setState(() {
+          gameOver = true;
+          message = (a == 'X') ? 'Ты выиграл! 🎉' : 'Ты проиграл! 😔';
+        });
+        return;
+      }
+    }
+
+    if (!board.contains('')) {
+      setState(() {
+        gameOver = true;
+        message = 'Ничья 🤝';
+      });
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTapDown: (_) {
-        if (gameOver) {
-          startGame();
-        } else {
-          onTapDown();
-        }
-      },
-      onTapUp: (_) {
-        if (!gameOver) onTapUp();
-      },
-      child: Scaffold(
-        backgroundColor: Colors.lightBlue,
-        body: Stack(
-          children: [
-            // птичка
-            Align(
-              alignment: Alignment(0, birdY),
-              child: Container(
-                width: 40,
-                height: 40,
-                decoration: const BoxDecoration(
-                  color: Colors.yellow,
-                  shape: BoxShape.circle,
-                ),
-              ),
+    return Scaffold(
+      appBar: AppBar(title: const Text('Крестики-нолики')),
+      body: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          GridView.builder(
+            shrinkWrap: true,
+            itemCount: 9,
+            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: 3,
             ),
-            // трубы
-            for (int i = 0; i < pipesX.length; i++) ...[
-              Align(
-                alignment: Alignment(pipesX[i], pipeHeights[i] + gapSize),
+            itemBuilder: (context, index) {
+              return GestureDetector(
+                onTap: () => playerMove(index),
                 child: Container(
-                  width: 60,
-                  height: 1,
-                  color: Colors.green,
+                  margin: const EdgeInsets.all(4),
+                  decoration: BoxDecoration(
+                    border: Border.all(color: Colors.black),
+                    color: Colors.grey[200],
+                  ),
+                  child: Center(
+                    child: Text(
+                      board[index],
+                      style: const TextStyle(
+                        fontSize: 48,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
                 ),
-              ),
-              Align(
-                alignment: Alignment(pipesX[i], pipeHeights[i] - 1 - gapSize),
-                child: Container(
-                  width: 60,
-                  height: 1,
-                  color: Colors.green,
+              );
+            },
+          ),
+          const SizedBox(height: 20),
+          if (gameOver)
+            Column(
+              children: [
+                Text(
+                  message,
+                  style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
                 ),
-              ),
-            ],
-            // сообщение
-            if (gameOver)
-              const Center(
-                child: Text(
-                  "Tap to Restart",
-                  style: TextStyle(fontSize: 32, color: Colors.white),
+                const SizedBox(height: 10),
+                ElevatedButton(
+                  onPressed: resetGame,
+                  child: const Text("Играть снова"),
                 ),
-              )
-          ],
-        ),
+              ],
+            ),
+        ],
       ),
     );
   }
