@@ -1,141 +1,135 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
-import 'dart:convert';
-import 'package:shared_preferences/shared_preferences.dart';
-import 'package:intl/intl.dart';
 
 void main() {
-  runApp(const MyApp());
+  runApp(const IpCheckerApp());
 }
 
-const String baseUrl = "https://lol154.pythonanywhere.com";
-
-class MyApp extends StatelessWidget {
-  const MyApp({super.key});
+class IpCheckerApp extends StatelessWidget {
+  const IpCheckerApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      debugShowCheckedModeBanner: false,
-      title: 'Flutter Chat',
+      title: 'IP Checker',
       theme: ThemeData(
         primarySwatch: Colors.teal,
       ),
-      home: const ChatScreen(),
+      home: const IpCheckerScreen(),
     );
   }
 }
 
-class ChatMessage {
-  final String text;
-  final String user;
-  final DateTime time;
-
-  ChatMessage({required this.text, required this.user, required this.time});
-
-  factory ChatMessage.fromJson(Map<String, dynamic> json) {
-    return ChatMessage(
-      text: json['text'] ?? "",
-      user: json['user'] ?? json['name'] ?? "Anon",
-      time: DateTime.tryParse(json['time'] ?? "") ?? DateTime.now(),
-    );
-  }
-}
-
-class ChatScreen extends StatefulWidget {
-  const ChatScreen({super.key});
+class IpCheckerScreen extends StatefulWidget {
+  const IpCheckerScreen({super.key});
 
   @override
-  _ChatScreenState createState() => _ChatScreenState();
+  State<IpCheckerScreen> createState() => _IpCheckerScreenState();
 }
 
-class _ChatScreenState extends State<ChatScreen> {
-  List<ChatMessage> messages = [];
-  final TextEditingController _controller = TextEditingController();
-  String username = "Anon";
+class _IpCheckerScreenState extends State<IpCheckerScreen> {
+  String? publicIp;
+  List<String> localIps = [];
+  String status = 'Готово';
+  bool loading = false;
+  String? lastError;
 
   @override
   void initState() {
     super.initState();
-    _loadUsername();
-    _fetchMessages();
+    _checkAll();
   }
 
-  Future<void> _loadUsername() async {
-    final prefs = await SharedPreferences.getInstance();
-    String? savedName = prefs.getString("username");
-
-    if (savedName == null) {
-      savedName = "User${DateTime.now().millisecondsSinceEpoch % 1000}";
-      await prefs.setString("username", savedName);
-    }
-
+  Future<void> _checkAll() async {
     setState(() {
-      username = savedName!;
+      loading = true;
+      status = 'Проверка...';
+      lastError = null;
     });
+
+    try {
+      await Future.wait([_fetchPublicIp(), _fetchLocalIps()]);
+      setState(() {
+        status = 'Готово';
+      });
+    } catch (e) {
+      setState(() {
+        lastError = e.toString();
+        status = 'Ошибка';
+      });
+    } finally {
+      setState(() {
+        loading = false;
+      });
+    }
   }
 
-  Future<void> _fetchMessages() async {
+  Future<void> _fetchPublicIp() async {
+    // сервис ipify возвращает JSON: {"ip":"1.2.3.4"}
+    final uri = Uri.parse('https://api.ipify.org?format=json');
     try {
-      final response = await http.get(Uri.parse("$baseUrl/messages"));
-      debugPrint("GET статус: ${response.statusCode}, тело: ${response.body}");
-      if (response.statusCode == 200) {
-        final List<dynamic> data = json.decode(response.body);
+      final resp = await http.get(uri).timeout(const Duration(seconds: 8));
+      if (resp.statusCode == 200) {
+        final data = json.decode(resp.body);
         setState(() {
-          messages = data.map((m) => ChatMessage.fromJson(m)).toList();
+          publicIp = data['ip']?.toString();
         });
       } else {
-        debugPrint("Ошибка GET: ${response.body}");
+        throw Exception('HTTP ${resp.statusCode}');
       }
+    } on TimeoutException catch (_) {
+      throw Exception('Таймаут при получении публичного IP');
+    } on SocketException catch (_) {
+      throw Exception('Нет сетевого соединения (SocketException)');
     } catch (e) {
-      debugPrint("Ошибка загрузки: $e");
+      throw Exception('Ошибка получения публичного IP: $e');
     }
   }
 
-  Future<void> _sendMessage(String text) async {
-    if (text.trim().isEmpty) return;
+  Future<void> _fetchLocalIps() async {
     try {
-      final response = await http.post(
-        Uri.parse("$baseUrl/messages"),
-        headers: {"Content-Type": "application/json"},
-        body: json.encode({"name": username, "text": text}), // ✅ сервер ждёт name
+      final interfaces = await NetworkInterface.list(
+        includeLoopback: false,
+        includeLinkLocal: true,
       );
-      debugPrint("POST статус: ${response.statusCode}, тело: ${response.body}");
-      if (response.statusCode == 200 || response.statusCode == 201) {
-        _controller.clear();
-        _fetchMessages();
-      } else {
-        debugPrint("Ошибка POST: ${response.body}");
+      final ips = <String>[];
+      for (final iface in interfaces) {
+        for (final addr in iface.addresses) {
+          // IPv4/IPv6
+          ips.add('${iface.name}: ${addr.address}');
+        }
       }
+      if (ips.isEmpty) ips.add('Не удалось определить локальные адреса');
+      setState(() => localIps = ips);
     } catch (e) {
-      debugPrint("Ошибка отправки: $e");
+      setState(() => localIps = ['Ошибка при получении локальных IP: $e']);
     }
   }
 
-  Widget _buildMessage(ChatMessage msg) {
-    bool isMine = msg.user == username;
-    return Align(
-      alignment: isMine ? Alignment.centerRight : Alignment.centerLeft,
-      child: Container(
-        margin: const EdgeInsets.symmetric(vertical: 5, horizontal: 10),
-        padding: const EdgeInsets.all(10),
-        decoration: BoxDecoration(
-          color: isMine ? Colors.green[300] : Colors.grey[300],
-          borderRadius: BorderRadius.circular(10),
-        ),
-        child: Column(
-          crossAxisAlignment:
-              isMine ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+  Widget _buildCard(IconData icon, String title, Widget child) {
+    return Card(
+      margin: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              msg.user,
-              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
-            ),
-            Text(msg.text),
-            Text(
-              DateFormat("HH:mm").format(msg.time),
-              style: const TextStyle(fontSize: 10, color: Colors.black54),
-            ),
+            Icon(icon, size: 32, color: Colors.teal),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(title, style: const TextStyle(fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 8),
+                  child,
+                ],
+              ),
+            )
           ],
         ),
       ),
@@ -144,49 +138,60 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final publicWidget = publicIp != null
+        ? SelectableText(publicIp!, style: const TextStyle(fontSize: 18))
+        : const Text('—');
+
+    final localWidget = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: localIps.map((s) => Text(s)).toList(),
+    );
+
     return Scaffold(
-      appBar: AppBar(
-        title: const Text("Flutter Chat"),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            onPressed: _fetchMessages,
-          ),
-        ],
-      ),
-      body: Column(
-        children: [
-          Expanded(
-            child: ListView.builder(
-              reverse: true,
-              itemCount: messages.length,
-              itemBuilder: (context, index) {
-                return _buildMessage(messages[messages.length - 1 - index]);
-              },
-            ),
-          ),
-          const Divider(height: 1),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-            child: Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _controller,
-                    decoration: const InputDecoration(
-                      hintText: "Введите сообщение...",
+      appBar: AppBar(title: const Text('IP Checker — Проверка интернета')),
+      body: RefreshIndicator(
+        onRefresh: _checkAll,
+        child: SingleChildScrollView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          padding: const EdgeInsets.symmetric(vertical: 12),
+          child: Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text('Статус: $status',
+                          style: const TextStyle(fontSize: 16)),
                     ),
-                    onSubmitted: _sendMessage,
-                  ),
+                    if (loading) const SizedBox(width: 8),
+                    if (loading) const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)),
+                    IconButton(
+                      icon: const Icon(Icons.refresh),
+                      onPressed: _checkAll,
+                    ),
+                  ],
                 ),
-                IconButton(
-                  icon: const Icon(Icons.send, color: Colors.teal),
-                  onPressed: () => _sendMessage(_controller.text),
-                ),
-              ],
-            ),
+              ),
+              _buildCard(Icons.public, 'Публичный IP (через api.ipify.org)', publicWidget),
+              _buildCard(Icons.laptop_mac, 'Локальные IP интерфейсов', localWidget),
+              _buildCard(Icons.info, 'Дополнительно', Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Последняя ошибка: ${lastError ?? "нет"}'),
+                  const SizedBox(height: 6),
+                  const Text('Потяните вниз для обновления или нажмите кнопку обновить.'),
+                ],
+              )),
+              const SizedBox(height: 30),
+            ],
           ),
-        ],
+        ),
+      ),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: _checkAll,
+        icon: const Icon(Icons.network_check),
+        label: const Text('Проверить'),
       ),
     );
   }
