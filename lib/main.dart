@@ -10,7 +10,7 @@ void main() {
   runApp(const ChatApp());
 }
 
-const String serverBaseUrl = "https://lol154.pythonanywhere.com"; // <- замените на URL сервера
+const String serverBaseUrl = "https://lol154.pythonanywhere.com";
 
 class ChatApp extends StatelessWidget {
   const ChatApp({super.key});
@@ -18,7 +18,7 @@ class ChatApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Красивый чат',
+      title: 'Чат',
       theme: ThemeData(primarySwatch: Colors.deepPurple),
       debugShowCheckedModeBanner: false,
       home: const ChatScreen(),
@@ -34,12 +34,14 @@ class ChatMessage {
 
   ChatMessage({this.id, required this.name, required this.text, required this.ts});
 
-  factory ChatMessage.fromJson(Map<String, dynamic> j) => ChatMessage(
-    id: j['id'],
-    name: j['name'],
-    text: j['text'],
-    ts: DateTime.parse(j['ts']),
-  );
+  factory ChatMessage.fromJson(Map<String, dynamic> j) {
+    return ChatMessage(
+      id: j['id'],
+      name: j['name'],
+      text: j['text'],
+      ts: DateTime.parse(j['ts']),
+    );
+  }
 }
 
 class ChatScreen extends StatefulWidget {
@@ -77,7 +79,6 @@ class _ChatScreenState extends State<ChatScreen> {
     final prefs = await SharedPreferences.getInstance();
     String? name = prefs.getString('chat_username');
     if (name == null || name.trim().isEmpty) {
-      // попросим ввести имя
       await Future.delayed(Duration.zero);
       await _askForName();
     } else {
@@ -105,8 +106,6 @@ class _ChatScreenState extends State<ChatScreen> {
         ],
       ),
     );
-
-    // простой способ: если имя было введено — сохранить, иначе поставить случайное
     if (tmp.trim().isEmpty) {
       tmp = "User${DateTime.now().millisecondsSinceEpoch % 1000}";
     }
@@ -126,10 +125,12 @@ class _ChatScreenState extends State<ChatScreen> {
           _messages = msgs;
         });
       } else {
-        // handle error
+        // ошибка получения
+        // print("Error fetching messages: ${res.statusCode}");
       }
     } catch (e) {
-      // network error
+      // ошибка сети
+      // print("Network error: $e");
     } finally {
       setState(() => _loading = false);
     }
@@ -153,17 +154,17 @@ class _ChatScreenState extends State<ChatScreen> {
         body: json.encode(payload),
       );
       if (res.statusCode == 201 || res.statusCode == 200) {
-        // обновим локально (и/или подгрузим свежие)
         await _loadMessages();
-        // прокрутить наверх (список реверсный)
         if (_scroll.hasClients) {
           _scroll.animateTo(0.0, duration: const Duration(milliseconds: 300), curve: Curves.easeOut);
         }
       } else {
-        // error
+        // ошибка отправки
+        // print("Error sending message: ${res.statusCode}");
       }
     } catch (e) {
-      // network error
+      // ошибка сети
+      // print("Send error: $e");
     }
   }
 
@@ -182,8 +183,6 @@ class _ChatScreenState extends State<ChatScreen> {
 
   @override
   Widget build(BuildContext context) {
-    // список _messages приходит с сервера с ORDER BY id DESC (новые первыми).
-    // для удобства мы будем отображать в обратном порядке (старые сверху).
     final msgs = List<ChatMessage>.from(_messages.reversed);
 
     String? lastDate;
@@ -214,7 +213,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 },
               );
               if (newName != null && newName.trim().isNotEmpty) {
-                await prefs.setString('chat_username', newName.trim());
+                await SharedPreferences.getInstance().then((prefs) => prefs.setString('chat_username', newName.trim()));
                 setState(() => _username = newName.trim());
               }
             },
