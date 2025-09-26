@@ -1,70 +1,143 @@
+import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
-import 'dart:convert';
 
 void main() {
-  runApp(const MyApp());
+  runApp(const ChatApp());
 }
 
-class MyApp extends StatelessWidget {
-  const MyApp({super.key});
-
+class ChatApp extends StatelessWidget {
+  const ChatApp({super.key});
   @override
   Widget build(BuildContext context) {
-    return const MaterialApp(
-      home: IpChecker(),
+    return MaterialApp(
+      debugShowCheckedModeBanner: false,
+      title: 'Chat',
+      theme: ThemeData(primarySwatch: Colors.blue),
+      home: const ChatPage(),
     );
   }
 }
 
-class IpChecker extends StatefulWidget {
-  const IpChecker({super.key});
-
+class ChatPage extends StatefulWidget {
+  const ChatPage({super.key});
   @override
-  State<IpChecker> createState() => _IpCheckerState();
+  State<ChatPage> createState() => _ChatPageState();
 }
 
-class _IpCheckerState extends State<IpChecker> {
-  String? _ip;
-  String? _error;
+class _ChatPageState extends State<ChatPage> {
+  final TextEditingController _userController = TextEditingController();
+  final TextEditingController _msgController = TextEditingController();
+  List<dynamic> messages = [];
 
-  Future<void> _fetchIp() async {
-    try {
-      final response = await http.get(Uri.parse("https://api.ipify.org?format=json"));
-      if (response.statusCode == 200) {
-        final data = json.decode(response.body);
-        setState(() {
-          _ip = data["ip"];
-          _error = null;
-        });
-      } else {
-        setState(() {
-          _error = "Ошибка: ${response.statusCode}";
-        });
-      }
-    } catch (e) {
-      setState(() {
-        _error = "Ошибка сети: $e";
-      });
-    }
-  }
+  final String baseUrl = "https://lol154.pythonanywhere.com/messages";
 
   @override
   void initState() {
     super.initState();
-    _fetchIp();
+    _loadMessages();
+    Timer.periodic(const Duration(seconds: 5), (_) {
+      _loadMessages();
+    });
+  }
+
+  Future<void> _loadMessages() async {
+    try {
+      final response = await http.get(Uri.parse(baseUrl));
+      debugPrint("GET ${response.statusCode} ${response.body}");
+      if (response.statusCode == 200) {
+        setState(() {
+          messages = json.decode(response.body);
+        });
+      }
+    } catch (e) {
+      debugPrint("Ошибка загрузки: $e");
+    }
+  }
+
+  Future<void> _sendMessage() async {
+    if (_msgController.text.trim().isEmpty) return;
+    try {
+      final response = await http.post(
+        Uri.parse(baseUrl),
+        headers: {"Content-Type": "application/json"},
+        body: json.encode({
+          "user": _userController.text.trim().isEmpty ? "Anon" : _userController.text.trim(),
+          "text": _msgController.text.trim(),
+        }),
+      );
+      debugPrint("POST ${response.statusCode} ${response.body}");
+      if (response.statusCode == 201 || response.statusCode == 200) {
+        _msgController.clear();
+        _loadMessages();
+      }
+    } catch (e) {
+      debugPrint("Ошибка отправки: $e");
+    }
+  }
+
+  Widget _buildMessageItem(Map<String, dynamic> msg) {
+    return ListTile(
+      title: Text(msg["user"] ?? "Anon"),
+      subtitle: Text(msg["text"] ?? ""),
+      trailing: Text(msg["time"] ?? ""),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text("IP Checker")),
-      body: Center(
-        child: _error != null
-            ? Text(_error!, style: const TextStyle(color: Colors.red))
-            : _ip != null
-                ? Text("Твой IP: $_ip", style: const TextStyle(fontSize: 22))
-                : const CircularProgressIndicator(),
+      appBar: AppBar(
+        title: const Text("Chat"),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            onPressed: _loadMessages,
+          )
+        ],
+      ),
+      body: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(8.0),
+            child: TextField(
+              controller: _userController,
+              decoration: const InputDecoration(
+                labelText: "Ваше имя",
+                border: OutlineInputBorder(),
+              ),
+            ),
+          ),
+          Expanded(
+            child: ListView.builder(
+              reverse: true,
+              itemCount: messages.length,
+              itemBuilder: (context, idx) {
+                final msg = messages[messages.length - 1 - idx];
+                return _buildMessageItem(msg);
+              },
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.all(8.0),
+            child: Row(children: [
+              Expanded(
+                child: TextField(
+                  controller: _msgController,
+                  decoration: const InputDecoration(
+                    labelText: "Сообщение",
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+              ),
+              IconButton(
+                icon: const Icon(Icons.send),
+                onPressed: _sendMessage,
+              )
+            ]),
+          ),
+        ],
       ),
     );
   }
