@@ -21,16 +21,19 @@ jobs:
       - name: Create Flutter project
         run: |
           flutter create app
-          cp -r lib app/
+          cp -r lib app/ || true
           cp pubspec.yaml app/ || true
 
-      - name: Disable ProGuard/R8
+      - name: Patch Kotlin version
         run: |
-          BUILD_GRADLE="app/android/app/build.gradle"
-          if [ -f "$BUILD_GRADLE" ]; then
-            sed -i 's/minifyEnabled true/minifyEnabled false/g' $BUILD_GRADLE || true
-            sed -i 's/shrinkResources true/shrinkResources false/g' $BUILD_GRADLE || true
-          fi
+          # В build.gradle обновляем ext.kotlin_version на 1.9.24
+          sed -i 's/ext.kotlin_version = .*/ext.kotlin_version = "1.9.24"/' app/android/build.gradle || true
+          # В settings.gradle тоже обновляем, если есть блок plugins
+          sed -i 's/id "org.jetbrains.kotlin.android" version ".*"/id "org.jetbrains.kotlin.android" version "1.9.24"/' app/android/settings.gradle || true
+
+      - name: Get dependencies
+        working-directory: app
+        run: flutter pub get
 
       - name: Build APK
         working-directory: app
