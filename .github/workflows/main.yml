@@ -24,6 +24,9 @@ jobs:
           cp -r lib app/ || true
           cp pubspec.yaml app/ || true
 
+          # Добавляем INTERNET permission перед <application>
+          sed -i '/<application/i\    <uses-permission android:name="android.permission.INTERNET"/>' app/android/app/src/main/AndroidManifest.xml
+
       - name: Patch Kotlin version
         run: |
           # В build.gradle обновляем ext.kotlin_version на 1.9.24
