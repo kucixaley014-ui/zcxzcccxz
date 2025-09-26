@@ -1,152 +1,172 @@
 import 'package:flutter/material.dart';
-import 'dart:math';
+import 'package:intl/intl.dart';
 
 void main() {
-  runApp(const TicTacToeApp());
+  runApp(const ChatApp());
 }
 
-class TicTacToeApp extends StatelessWidget {
-  const TicTacToeApp({super.key});
+class ChatApp extends StatelessWidget {
+  const ChatApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Крестики-нолики',
+      title: 'Чат',
       debugShowCheckedModeBanner: false,
-      home: TicTacToeGame(),
+      theme: ThemeData(
+        primarySwatch: Colors.deepPurple,
+      ),
+      home: const ChatScreen(),
     );
   }
 }
 
-class TicTacToeGame extends StatefulWidget {
-  @override
-  _TicTacToeGameState createState() => _TicTacToeGameState();
+class ChatMessage {
+  final String text;
+  final DateTime time;
+
+  ChatMessage({required this.text, required this.time});
 }
 
-class _TicTacToeGameState extends State<TicTacToeGame> {
-  List<String> board = List.filled(9, '');
-  bool gameOver = false;
-  String message = '';
+class ChatScreen extends StatefulWidget {
+  const ChatScreen({super.key});
 
-  final Random _random = Random();
+  @override
+  State<ChatScreen> createState() => _ChatScreenState();
+}
 
-  void resetGame() {
+class _ChatScreenState extends State<ChatScreen> {
+  final TextEditingController _controller = TextEditingController();
+  final List<ChatMessage> _messages = [];
+
+  void _sendMessage() {
+    if (_controller.text.trim().isEmpty) return;
     setState(() {
-      board = List.filled(9, '');
-      gameOver = false;
-      message = '';
+      _messages.insert(
+        0,
+        ChatMessage(
+          text: _controller.text.trim(),
+          time: DateTime.now(),
+        ),
+      );
     });
+    _controller.clear();
   }
 
-  void playerMove(int index) {
-    if (board[index] == '' && !gameOver) {
-      setState(() {
-        board[index] = 'X';
-      });
-      checkWinner();
-      if (!gameOver) {
-        botMove();
-      }
-    }
-  }
-
-  void botMove() {
-    List<int> emptyCells = [];
-    for (int i = 0; i < 9; i++) {
-      if (board[i] == '') emptyCells.add(i);
-    }
-    if (emptyCells.isNotEmpty) {
-      int move = emptyCells[_random.nextInt(emptyCells.length)];
-      setState(() {
-        board[move] = 'O';
-      });
-      checkWinner();
-    }
-  }
-
-  void checkWinner() {
-    List<List<int>> winPatterns = [
-      [0, 1, 2],
-      [3, 4, 5],
-      [6, 7, 8],
-      [0, 3, 6],
-      [1, 4, 7],
-      [2, 5, 8],
-      [0, 4, 8],
-      [2, 4, 6],
-    ];
-
-    for (var pattern in winPatterns) {
-      String a = board[pattern[0]];
-      String b = board[pattern[1]];
-      String c = board[pattern[2]];
-      if (a != '' && a == b && b == c) {
-        setState(() {
-          gameOver = true;
-          message = (a == 'X') ? 'Ты выиграл! 🎉' : 'Ты проиграл! 😔';
-        });
-        return;
-      }
-    }
-
-    if (!board.contains('')) {
-      setState(() {
-        gameOver = true;
-        message = 'Ничья 🤝';
-      });
-    }
+  Widget _buildMessage(ChatMessage msg) {
+    String time = DateFormat.Hm().format(msg.time);
+    return Align(
+      alignment: Alignment.centerRight,
+      child: Container(
+        margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: Colors.deepPurple[300],
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            Text(
+              msg.text,
+              style: const TextStyle(color: Colors.white, fontSize: 16),
+            ),
+            Text(
+              time,
+              style: const TextStyle(color: Colors.white70, fontSize: 12),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
+    String? lastDate;
+
     return Scaffold(
-      appBar: AppBar(title: const Text('Крестики-нолики')),
+      appBar: AppBar(title: const Text("Чат")),
       body: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          GridView.builder(
-            shrinkWrap: true,
-            itemCount: 9,
-            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: 3,
-            ),
-            itemBuilder: (context, index) {
-              return GestureDetector(
-                onTap: () => playerMove(index),
-                child: Container(
-                  margin: const EdgeInsets.all(4),
-                  decoration: BoxDecoration(
-                    border: Border.all(color: Colors.black),
-                    color: Colors.grey[200],
-                  ),
-                  child: Center(
-                    child: Text(
-                      board[index],
-                      style: const TextStyle(
-                        fontSize: 48,
-                        fontWeight: FontWeight.bold,
+          Expanded(
+            child: ListView.builder(
+              reverse: true,
+              itemCount: _messages.length,
+              itemBuilder: (context, index) {
+                final msg = _messages[index];
+                String date = DateFormat('yyyy-MM-dd').format(msg.time);
+
+                Widget dateSeparator = Container();
+                if (lastDate != date) {
+                  lastDate = date;
+                  dateSeparator = Column(
+                    children: [
+                      const SizedBox(height: 10),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Divider(
+                              color: Colors.grey.shade400,
+                              thickness: 1,
+                              indent: 10,
+                              endIndent: 10,
+                            ),
+                          ),
+                          Text(
+                            date,
+                            style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                                color: Colors.black54),
+                          ),
+                          Expanded(
+                            child: Divider(
+                              color: Colors.grey.shade400,
+                              thickness: 1,
+                              indent: 10,
+                              endIndent: 10,
+                            ),
+                          ),
+                        ],
                       ),
+                      const SizedBox(height: 10),
+                    ],
+                  );
+                }
+
+                return Column(
+                  children: [
+                    dateSeparator,
+                    _buildMessage(msg),
+                  ],
+                );
+              },
+            ),
+          ),
+          SafeArea(
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              color: Colors.grey.shade200,
+              child: Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _controller,
+                      decoration: const InputDecoration(
+                        hintText: "Введите сообщение...",
+                        border: InputBorder.none,
+                      ),
+                      onSubmitted: (_) => _sendMessage(),
                     ),
                   ),
-                ),
-              );
-            },
-          ),
-          const SizedBox(height: 20),
-          if (gameOver)
-            Column(
-              children: [
-                Text(
-                  message,
-                  style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(height: 10),
-                ElevatedButton(
-                  onPressed: resetGame,
-                  child: const Text("Играть снова"),
-                ),
-              ],
+                  IconButton(
+                    icon: const Icon(Icons.send, color: Colors.deepPurple),
+                    onPressed: _sendMessage,
+                  ),
+                ],
+              ),
             ),
+          ),
         ],
       ),
     );
