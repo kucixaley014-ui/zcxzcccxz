@@ -1,6 +1,6 @@
 name: hello_flutter
-description: A simple chat app with Flask backend (v2.1)
-publish_to: 'none' # локальный проект
+description: A simple chat app with Flask backend (stable build)
+publish_to: 'none'
 
 version: 2.1.0+1
 
@@ -10,14 +10,12 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+
   http: ^1.2.2
   shared_preferences: ^2.2.3
   intl: ^0.19.0
   dio: ^5.7.0
-  file_picker: ^8.0.3
-  path_provider: ^2.1.4
-  permission_handler: ^11.3.1
-  flutter_plugin_android_lifecycle: ^2.0.17   # фикс для SDK 35
+  cupertino_icons: ^1.0.6
 
 dev_dependencies:
   flutter_test:
