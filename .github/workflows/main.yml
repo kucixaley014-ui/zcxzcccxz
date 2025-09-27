@@ -24,12 +24,20 @@ jobs:
           cp -r lib app/ || true
           cp pubspec.yaml app/ || true
 
-          # INTERNET permission
+          # Добавляем INTERNET + STORAGE + NOTIFICATIONS
           sed -i '/<application/i\    <uses-permission android:name="android.permission.INTERNET"/>' app/android/app/src/main/AndroidManifest.xml
+          sed -i '/<application/i\    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"/>' app/android/app/src/main/AndroidManifest.xml
+          sed -i '/<application/i\    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"/>' app/android/app/src/main/AndroidManifest.xml
+          sed -i '/<application/i\    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>' app/android/app/src/main/AndroidManifest.xml
 
-          # Fix compileSdk and targetSdk
+          # Обновляем compileSdk и targetSdk
           sed -i 's/compileSdkVersion [0-9]\+/compileSdkVersion 34/' app/android/app/build.gradle || true
           sed -i 's/targetSdkVersion [0-9]\+/targetSdkVersion 34/' app/android/app/build.gradle || true
+
+          # Проверяем, если Gradle использует namespace, задаем его
+          if ! grep -q "namespace" app/android/app/build.gradle; then
+            echo 'android { namespace "com.example.app" }' >> app/android/app/build.gradle
+          fi
 
       - name: Get dependencies
         working-directory: app
