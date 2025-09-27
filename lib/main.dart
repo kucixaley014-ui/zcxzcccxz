@@ -1,6 +1,6 @@
-// main.dart
-import 'dart:convert';
+// lib/main.dart
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -14,37 +14,26 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
+const String serverBaseUrl = "https://lol154.pythonanywhere.com"; // твой сервер
+
+final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
+    FlutterLocalNotificationsPlugin();
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await NotificationHelper.init();
+
+  // Инициализация локальных уведомлений
+  const AndroidInitializationSettings initializationSettingsAndroid =
+      AndroidInitializationSettings('@mipmap/ic_launcher'); // используй свой icon
+  final InitializationSettings initializationSettings = InitializationSettings(
+    android: initializationSettingsAndroid,
+    iOS: null,
+    macOS: null,
+  );
+
+  await flutterLocalNotificationsPlugin.initialize(initializationSettings);
+
   runApp(const MyApp());
-}
-
-const String serverBaseUrl = "https://lol154.pythonanywhere.com";
-
-class NotificationHelper {
-  static final _plugin = FlutterLocalNotificationsPlugin();
-
-  static Future<void> init() async {
-    const androidInit = AndroidInitializationSettings('@mipmap/ic_launcher');
-    const iosInit = DarwinInitializationSettings();
-    await _plugin.initialize(
-      const InitializationSettings(android: androidInit, iOS: iosInit),
-    );
-  }
-
-  static Future<void> show(String title, String body) async {
-    const androidDetails = AndroidNotificationDetails(
-      'chat_messages_channel',
-      'Chat messages',
-      channelDescription: 'Уведомления о новых сообщениях',
-      importance: Importance.max,
-      priority: Priority.high,
-      ticker: 'ticker',
-    );
-    const iosDetails = DarwinNotificationDetails();
-    await _plugin.show(0, title, body, const NotificationDetails(android: androidDetails, iOS: iosDetails));
-  }
 }
 
 class MyApp extends StatelessWidget {
@@ -53,17 +42,52 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: "Chat 2.2",
+      title: "Chat 2.3",
       theme: ThemeData(
         primarySwatch: Colors.teal,
         scaffoldBackgroundColor: Colors.grey[100],
       ),
-      home: const AuthPage(),
+      home: const EntryDecider(),
     );
   }
 }
 
-// ===================== AUTH =====================
+/// Решает, показывать экран логина или сразу чат, если есть token+username
+class EntryDecider extends StatefulWidget {
+  const EntryDecider({super.key});
+
+  @override
+  State<EntryDecider> createState() => _EntryDeciderState();
+}
+
+class _EntryDeciderState extends State<EntryDecider> {
+  Future<Map<String?, String?>> _check() async {
+    final prefs = await SharedPreferences.getInstance();
+    final token = prefs.getString('token');
+    final username = prefs.getString('username');
+    final notif = prefs.getBool('notify_enabled') ?? true;
+    return {'token': token, 'username': username, 'notif': notif.toString()};
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<Map<String?, String?>>(
+      future: _check(),
+      builder: (context, snap) {
+        if (!snap.hasData) return const Scaffold(body: Center(child: CircularProgressIndicator()));
+        final token = snap.data!['token'];
+        final username = snap.data!['username'];
+        if (token != null && username != null) {
+          return ChatPage(username: username, token: token);
+        } else {
+          return const AuthPage();
+        }
+      },
+    );
+  }
+}
+
+/// --- Auth Page (Register / Login) ---
 class AuthPage extends StatefulWidget {
   const AuthPage({super.key});
 
@@ -71,68 +95,97 @@ class AuthPage extends StatefulWidget {
   State<AuthPage> createState() => _AuthPageState();
 }
 
-class _AuthPageState extends State<AuthPage> {
+class _AuthPageState extends State<AuthPage> with WidgetsBindingObserver {
   final _formKey = GlobalKey<FormState>();
   final _nameCtrl = TextEditingController();
   final _passCtrl = TextEditingController();
   bool _loading = false;
+  bool _isRegister = false;
 
-  Future<void> _requestInitialPermissions() async {
-    // Notifications (Android 13+ will actually prompt)
-    await Permission.notification.request();
-    // Storage (scoped) - ask generic storage permission; on modern Android apps it might be scoped storage
-    await Permission.storage.request();
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
   }
 
-  Future<void> _login() async {
+  Future<void> _toggleRegister() async {
+    setState(() => _isRegister = !_isRegister);
+  }
+
+  Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
     setState(() => _loading = true);
 
+    final username = _nameCtrl.text.trim();
+    final password = _passCtrl.text.trim();
+
     try {
+      final url = _isRegister ? '$serverBaseUrl/register' : '$serverBaseUrl/login';
       final res = await http.post(
-        Uri.parse("$serverBaseUrl/login"),
+        Uri.parse(url),
         headers: {"Content-Type": "application/json"},
-        body: jsonEncode({
-          "username": _nameCtrl.text.trim(),
-          "password": _passCtrl.text.trim(),
-        }),
+        body: jsonEncode({"username": username, "password": password}),
       );
 
-      if (res.statusCode >= 200 && res.statusCode < 300) {
+      if (res.statusCode == 200 || res.statusCode == 201) {
         final data = jsonDecode(res.body);
         final prefs = await SharedPreferences.getInstance();
-        await prefs.setString("token", data["token"]);
-        await prefs.setString("username", data["username"]);
 
-        // запрашиваем разрешения (notification + storage)
-        await _requestInitialPermissions();
-
-        if (mounted) {
-          Navigator.pushReplacement(
-            context,
-            MaterialPageRoute(
-              builder: (_) => ChatPage(username: data["username"]),
-            ),
+        // login endpoint returns token+username; register may not — если регистр успешна, надо логиниться автоматически
+        if (_isRegister && (data['status'] == 'ok' || res.statusCode == 201)) {
+          // после регистрации попытаемся залогинить автоматически
+          final loginRes = await http.post(
+            Uri.parse('$serverBaseUrl/login'),
+            headers: {"Content-Type": "application/json"},
+            body: jsonEncode({"username": username, "password": password}),
           );
+          if (loginRes.statusCode == 200) {
+            final loginData = jsonDecode(loginRes.body);
+            await prefs.setString('token', loginData['token']);
+            await prefs.setString('username', loginData['username']);
+            await prefs.setBool('notify_enabled', true);
+            if (mounted) Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => ChatPage(username: loginData['username'], token: loginData['token'])));
+            return;
+          } else {
+            // регистрация успешна, но автоматический логин упал — всё равно покажем сообщение
+            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Регистрация прошла, попробуйте войти.')));
+          }
         }
+
+        if (!_isRegister && data['token'] != null) {
+          await prefs.setString('token', data['token']);
+          await prefs.setString('username', data['username']);
+          await prefs.setBool('notify_enabled', true);
+          if (mounted) Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => ChatPage(username: data['username'], token: data['token'])));
+          return;
+        }
+
+        // на случай, если сервер вернул ok (при регистрации) — обработано выше.
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Ответ сервера: ${res.statusCode} ${res.body}')));
       } else {
-        String msg = "Неверный логин или пароль";
+        // полезно показать тело ответа для отладки — но не перегружать пользователя
+        String msg;
         try {
-          final body = jsonDecode(res.body);
-          if (body is Map && body['error'] != null) msg = body['error'];
-        } catch (_) {}
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+          final j = jsonDecode(res.body);
+          msg = j['error'] ?? j['message'] ?? res.body;
+        } catch (e) {
+          msg = res.body;
+        }
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Ошибка: $msg')));
       }
     } catch (e) {
-      debugPrint("Ошибка входа: $e");
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Ошибка соединения")));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Ошибка сети: $e')));
+    } finally {
+      setState(() => _loading = false);
     }
-
-    setState(() => _loading = false);
   }
 
-  void _goRegister() {
-    Navigator.push(context, MaterialPageRoute(builder: (_) => const RegisterPage()));
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _nameCtrl.dispose();
+    _passCtrl.dispose();
+    super.dispose();
   }
 
   @override
@@ -149,18 +202,28 @@ class _AuthPageState extends State<AuthPage> {
               child: Form(
                 key: _formKey,
                 child: Column(mainAxisSize: MainAxisSize.min, children: [
-                  const Text("Вход в чат", style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 20),
-                  TextFormField(controller: _nameCtrl, decoration: const InputDecoration(labelText: "Имя"), validator: (v) => v!.isEmpty ? "Введите имя" : null),
-                  const SizedBox(height: 10),
-                  TextFormField(controller: _passCtrl, obscureText: true, decoration: const InputDecoration(labelText: "Пароль"), validator: (v) => v!.isEmpty ? "Введите пароль" : null),
-                  const SizedBox(height: 20),
+                  Text(_isRegister ? "Регистрация" : "Вход в чат", style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 16),
+                  TextFormField(
+                    controller: _nameCtrl,
+                    decoration: const InputDecoration(labelText: "Имя"),
+                    validator: (v) => v!.isEmpty ? "Введите имя" : null,
+                  ),
+                  const SizedBox(height: 8),
+                  TextFormField(
+                    controller: _passCtrl,
+                    obscureText: true,
+                    decoration: const InputDecoration(labelText: "Пароль"),
+                    validator: (v) => v!.isEmpty ? "Введите пароль" : null,
+                  ),
+                  const SizedBox(height: 16),
                   _loading
                       ? const CircularProgressIndicator()
-                      : Column(
+                      : Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
-                            ElevatedButton(onPressed: _login, child: const Text("Войти")),
-                            TextButton(onPressed: _goRegister, child: const Text("Регистрация")),
+                            ElevatedButton(onPressed: _submit, child: Text(_isRegister ? "Зарегистрироваться" : "Войти")),
+                            TextButton(onPressed: _toggleRegister, child: Text(_isRegister ? "Уже есть аккаунт?" : "Регистрация")),
                           ],
                         ),
                 ]),
@@ -173,139 +236,106 @@ class _AuthPageState extends State<AuthPage> {
   }
 }
 
-// ===================== REGISTER =====================
-class RegisterPage extends StatefulWidget {
-  const RegisterPage({super.key});
-  @override
-  State<RegisterPage> createState() => _RegisterPageState();
-}
-
-class _RegisterPageState extends State<RegisterPage> {
-  final _formKey = GlobalKey<FormState>();
-  final _nameCtrl = TextEditingController();
-  final _passCtrl = TextEditingController();
-  bool _loading = false;
-
-  Future<void> _register() async {
-    if (!_formKey.currentState!.validate()) return;
-    setState(() => _loading = true);
-
-    try {
-      final res = await http.post(
-        Uri.parse("$serverBaseUrl/register"),
-        headers: {"Content-Type": "application/json"},
-        body: jsonEncode({
-          "username": _nameCtrl.text.trim(),
-          "password": _passCtrl.text.trim(),
-        }),
-      );
-
-      if (res.statusCode >= 200 && res.statusCode < 300) {
-        // Авто-вход после успешной регистрации
-        final loginRes = await http.post(
-          Uri.parse("$serverBaseUrl/login"),
-          headers: {"Content-Type": "application/json"},
-          body: jsonEncode({
-            "username": _nameCtrl.text.trim(),
-            "password": _passCtrl.text.trim(),
-          }),
-        );
-        if (loginRes.statusCode >= 200 && loginRes.statusCode < 300) {
-          final data = jsonDecode(loginRes.body);
-          final prefs = await SharedPreferences.getInstance();
-          await prefs.setString("token", data["token"]);
-          await prefs.setString("username", data["username"]);
-
-          // запрос разрешений сразу после регистрации
-          await Permission.notification.request();
-          await Permission.storage.request();
-
-          if (mounted) {
-            Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => ChatPage(username: data["username"])));
-          }
-        } else {
-          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Зарегистрировано, но не удалось автоматически войти — войдите вручную")));
-          Navigator.pop(context);
-        }
-      } else {
-        String msg = "Ошибка регистрации";
-        try {
-          final body = jsonDecode(res.body);
-          if (body is Map && body['error'] != null) msg = body['error'];
-        } catch (_) {}
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
-      }
-    } catch (e) {
-      debugPrint("Ошибка регистрации: $e");
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Ошибка связи с сервером")));
-    }
-
-    setState(() => _loading = false);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text("Регистрация")),
-      body: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Form(
-          key: _formKey,
-          child: Column(children: [
-            TextFormField(controller: _nameCtrl, decoration: const InputDecoration(labelText: "Имя"), validator: (v) => v!.isEmpty ? "Введите имя" : null),
-            const SizedBox(height: 10),
-            TextFormField(controller: _passCtrl, obscureText: true, decoration: const InputDecoration(labelText: "Пароль"), validator: (v) => v!.isEmpty ? "Введите пароль" : null),
-            const SizedBox(height: 20),
-            _loading ? const CircularProgressIndicator() : ElevatedButton(onPressed: _register, child: const Text("Зарегистрироваться")),
-          ]),
-        ),
-      ),
-    );
-  }
-}
-
-// ===================== CHAT =====================
+/// --- Chat Page ---
 class ChatPage extends StatefulWidget {
   final String username;
-  const ChatPage({super.key, required this.username});
+  final String token;
+  const ChatPage({super.key, required this.username, required this.token});
 
   @override
   State<ChatPage> createState() => _ChatPageState();
 }
 
-class _ChatPageState extends State<ChatPage> {
+class _ChatPageState extends State<ChatPage> with WidgetsBindingObserver {
   final _ctrl = TextEditingController();
   final _scrollCtrl = ScrollController();
-  List messages = [];
+  List<Map<String, dynamic>> messages = [];
   bool _loading = false;
-  String? _token;
-  Timer? _timer;
-  int _lastId = 0;
+  bool _uploading = false;
+  Timer? _pollTimer;
+  bool _appInForeground = true;
+  bool _notifEnabled = true;
+  String? _editingId; // id редактируемого сообщения (если не null)
+  double _lastScrollPos = 0.0;
+  bool _userScrolledUp = false;
+  final Dio _dio = Dio();
 
   @override
   void initState() {
     super.initState();
-    _init();
+    WidgetsBinding.instance.addObserver(this);
+    _initFromPrefs();
+    _scrollCtrl.addListener(_onScroll);
+    _startPolling();
   }
 
-  Future<void> _init() async {
+  Future<void> _initFromPrefs() async {
     final prefs = await SharedPreferences.getInstance();
-    _token = prefs.getString("token");
+    _notifEnabled = prefs.getBool('notify_enabled') ?? true;
+    // token уже передан в widget.token
     await _loadMessages();
-    _timer = Timer.periodic(const Duration(seconds: 3), (_) => _loadMessages());
   }
 
-  @override
-  void dispose() {
-    _timer?.cancel();
-    _scrollCtrl.dispose();
-    _ctrl.dispose();
-    super.dispose();
+  void _onScroll() {
+    final max = _scrollCtrl.position.maxScrollExtent;
+    final pos = _scrollCtrl.position.pixels;
+    _userScrolledUp = pos < (max - 150); // если от конца больше 150 пикс — считаем, что юзер поднялся
+    _lastScrollPos = pos;
   }
 
-  String _truncate(String s, [int max = 60]) {
-    if (s == null) return "";
-    return s.length <= max ? s : s.substring(0, max - 1) + '…';
+  void _startPolling() {
+    _pollTimer?.cancel();
+    _pollTimer = Timer.periodic(const Duration(seconds: 3), (_) => _pollOnce());
+  }
+
+  Future<void> _pollOnce() async {
+    // загружаем и сравниваем — если есть новые и приложение в фоне -> локальное уведомление
+    try {
+      final res = await http.get(Uri.parse("$serverBaseUrl/messages"));
+      if (res.statusCode == 200) {
+        final List<dynamic> remote = jsonDecode(res.body);
+        final newList = remote.map((e) => Map<String, dynamic>.from(e)).toList();
+
+        bool hasNewForMe = false;
+        if (messages.isNotEmpty) {
+          final lastKnownId = messages.last['id'];
+          for (final m in newList) {
+            if (m['id'] != null && m['id'] > lastKnownId && m['user'] != widget.username) {
+              hasNewForMe = true;
+              break;
+            }
+          }
+        } else {
+          // если раньше пусто и теперь не пусто — новые сообщения тоже считаем
+          if (newList.isNotEmpty) hasNewForMe = true;
+        }
+
+        final wasEmpty = messages.isEmpty;
+        setState(() => messages = newList);
+
+        // уведомление если в фоне и включены уведомления и есть новые от других
+        if (!_appInForeground && _notifEnabled && hasNewForMe) {
+          _showLocalNotification("Новое сообщение", "${newList.last['user']}: ${_truncate(newList.last['text'] ?? '')}");
+        }
+
+        // автоскролл: только если пользователь не листал вверх (т.е. _userScrolledUp == false)
+        if (!_userScrolledUp) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (_scrollCtrl.hasClients) {
+              _scrollCtrl.animateTo(
+                _scrollCtrl.position.maxScrollExtent,
+                duration: const Duration(milliseconds: 250),
+                curve: Curves.easeOut,
+              );
+            }
+          });
+        } else {
+          // если пользователь был вверху — не дергаем позицию
+        }
+      }
+    } catch (e) {
+      debugPrint("Poll error: $e");
+    }
   }
 
   Future<void> _loadMessages() async {
@@ -313,27 +343,8 @@ class _ChatPageState extends State<ChatPage> {
       final res = await http.get(Uri.parse("$serverBaseUrl/messages"));
       if (res.statusCode == 200) {
         final List<dynamic> remote = jsonDecode(res.body);
-        // find new messages (by numeric id)
-        int newMax = _lastId;
-        for (var item in remote) {
-          final id = item['id'] ?? 0;
-          if (id is int && id > newMax) newMax = id;
-        }
-        // detect messages with id > _lastId and not from me => notify
-        for (var item in remote) {
-          final id = item['id'] ?? 0;
-          final user = item['user'] ?? 'Anon';
-          final text = item['text'] ?? '';
-          if (id is int && id > _lastId && user != widget.username) {
-            // show notification
-            NotificationHelper.show(user, _truncate(text, 80));
-          }
-        }
-        setState(() {
-          messages = remote;
-          _lastId = newMax;
-        });
-        // scroll to bottom safely
+        setState(() => messages = remote.map((e) => Map<String, dynamic>.from(e)).toList());
+        // прокрутим вниз при начальной загрузке
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (_scrollCtrl.hasClients) {
             _scrollCtrl.jumpTo(_scrollCtrl.position.maxScrollExtent);
@@ -341,127 +352,153 @@ class _ChatPageState extends State<ChatPage> {
         });
       }
     } catch (e) {
-      debugPrint("Ошибка загрузки: $e");
+      debugPrint("Ошибка загрузки сообщений: $e");
     }
+  }
+
+  Future<void> _showLocalNotification(String title, String body) async {
+    const AndroidNotificationDetails androidPlatformChannelSpecifics = AndroidNotificationDetails(
+      'chat_messages', 'Chat Messages',
+      channelDescription: 'Уведомления о новых сообщениях',
+      importance: Importance.max,
+      priority: Priority.high,
+      ticker: 'ticker',
+    );
+    const NotificationDetails platformChannelSpecifics = NotificationDetails(android: androidPlatformChannelSpecifics);
+    await flutterLocalNotificationsPlugin.show(0, title, body, platformChannelSpecifics);
+  }
+
+  String _truncate(String s, [int len = 40]) {
+    if (s.length <= len) return s;
+    return s.substring(0, len - 1) + "…";
   }
 
   Future<void> _sendMessage(String text) async {
     if (text.trim().isEmpty) return;
+    if (_editingId != null) {
+      // отправляем редактирование
+      final id = int.tryParse(_editingId!) ?? -1;
+      if (id > 0) {
+        try {
+          final res = await http.put(
+            Uri.parse("$serverBaseUrl/messages/$id"),
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": "Bearer ${widget.token}"
+            },
+            body: jsonEncode({"text": text}),
+          );
+          if (res.statusCode == 200) {
+            _editingId = null;
+            _ctrl.clear();
+            await _loadMessages();
+            return;
+          } else {
+            ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Ошибка редактирования: ${res.statusCode}')));
+          }
+        } catch (e) {
+          debugPrint("Edit error: $e");
+        }
+      }
+      return;
+    }
+
     try {
-      await http.post(
+      final res = await http.post(
         Uri.parse("$serverBaseUrl/messages"),
         headers: {
           "Content-Type": "application/json",
-          if (_token != null) "Authorization": "Bearer $_token"
+          "Authorization": "Bearer ${widget.token}"
         },
         body: jsonEncode({"text": text}),
       );
-      _ctrl.clear();
-      await _loadMessages();
-    } catch (e) {
-      debugPrint("Ошибка отправки: $e");
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Не удалось отправить сообщение")));
-    }
-  }
-
-  Future<void> _deleteMessage(int id) async {
-    try {
-      final res = await http.delete(Uri.parse("$serverBaseUrl/messages/$id"), headers: {if (_token != null) "Authorization": "Bearer $_token"});
-      if (res.statusCode >= 200 && res.statusCode < 300) {
+      if (res.statusCode == 201 || res.statusCode == 200) {
+        _ctrl.clear();
         await _loadMessages();
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (_scrollCtrl.hasClients && !_userScrolledUp) {
+            _scrollCtrl.jumpTo(_scrollCtrl.position.maxScrollExtent);
+          }
+        });
       } else {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Ошибка удаления")));
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Ошибка отправки: ${res.statusCode}')));
       }
     } catch (e) {
-      debugPrint("Ошибка удаления: $e");
-    }
-  }
-
-  Future<void> _editMessage(int id, String oldText) async {
-    final controller = TextEditingController(text: oldText);
-    final newText = await showDialog<String>(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: const Text("Редактировать сообщение"),
-        content: TextField(controller: controller),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text("Отмена")),
-          TextButton(onPressed: () => Navigator.pop(context, controller.text), child: const Text("Сохранить")),
-        ],
-      ),
-    );
-    if (newText == null || newText.trim().isEmpty) return;
-    try {
-      final res = await http.put(Uri.parse("$serverBaseUrl/messages/$id"),
-          headers: {"Content-Type": "application/json", if (_token != null) "Authorization": "Bearer $_token"}, body: jsonEncode({"text": newText}));
-      if (res.statusCode >= 200 && res.statusCode < 300) {
-        await _loadMessages();
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Ошибка редактирования")));
-      }
-    } catch (e) {
-      debugPrint("Ошибка редактирования: $e");
+      debugPrint("Send error: $e");
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Ошибка сети при отправке')));
     }
   }
 
   Future<void> _pickAndSendFile() async {
+    // запросим разрешение на чтение/запись (Android)
+    final status = await Permission.storage.request();
+    if (!status.isGranted) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Нет разрешения на доступ к памяти')));
+      return;
+    }
+
     final result = await FilePicker.platform.pickFiles();
     if (result == null) return;
     final filePath = result.files.single.path!;
     final fileName = result.files.single.name;
-    setState(() => _loading = true);
+
+    setState(() => _uploading = true);
     try {
-      final dio = Dio();
       final formData = FormData.fromMap({
         "file": await MultipartFile.fromFile(filePath, filename: fileName),
         "text": fileName,
+        "user": widget.username,
       });
-      await dio.post("$serverBaseUrl/messages", data: formData, options: Options(headers: {if (_token != null) "Authorization": "Bearer $_token"}), onSendProgress: (s, t) {
-        // optionally show progress
-      });
+
+      await _dio.post(
+        "$serverBaseUrl/messages",
+        data: formData,
+        options: Options(headers: {"Authorization": "Bearer ${widget.token}"}),
+        onSendProgress: (sent, total) {
+          final percent = total > 0 ? (sent / total * 100).toStringAsFixed(0) : "0";
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Загрузка $percent%')));
+        },
+      );
+
       await _loadMessages();
     } catch (e) {
-      debugPrint("Ошибка загрузки файла: $e");
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Ошибка загрузки файла")));
+      debugPrint("File upload error: $e");
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Ошибка загрузки файла')));
     } finally {
-      setState(() => _loading = false);
-    }
-  }
-
-  Future<bool> _ensureStoragePermission() async {
-    if (Platform.isAndroid) {
-      final status = await Permission.storage.request();
-      return status.isGranted;
-    } else {
-      return true;
+      setState(() => _uploading = false);
     }
   }
 
   Future<void> _downloadFile(String filename) async {
-    final ok = await _ensureStoragePermission();
-    if (!ok) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Нет разрешения на запись")));
+    // запрос разрешения
+    final status = await Permission.storage.request();
+    if (!status.isGranted) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Нет разрешения на запись')));
       return;
     }
-    final dir = (await getExternalStorageDirectory()) ?? await getTemporaryDirectory();
-    final savePath = "${dir.path}/$filename";
-    final dio = Dio();
+
+    final dir = await getExternalStorageDirectory();
+    final savePath = "${dir!.path}/$filename";
     try {
-      await dio.download("$serverBaseUrl/files/$filename", savePath, onReceiveProgress: (r, t) {
-        if (t > 0) {
-          final p = (r / t * 100).toStringAsFixed(0);
-          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Скачивание $p%")));
-        }
-      });
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Файл сохранён: $savePath")));
+      await _dio.download(
+        "$serverBaseUrl/files/$filename",
+        savePath,
+        onReceiveProgress: (r, t) {
+          if (t > 0) {
+            final p = (r / t * 100).toStringAsFixed(0);
+            ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Скачивание $p%')));
+          }
+        },
+      );
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Сохранено: $savePath')));
     } catch (e) {
-      debugPrint("Ошибка скачивания: $e");
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Ошибка скачивания файла")));
+      debugPrint("Download error: $e");
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Ошибка скачивания')));
     }
   }
 
-  void _onMessageLongPress(Map m) {
-    final mine = m['user'] == widget.username;
+  void _onMessageLongPress(Map msg) {
+    final mine = msg['user'] == widget.username;
     showModalBottomSheet(
       context: context,
       builder: (_) {
@@ -472,7 +509,7 @@ class _ChatPageState extends State<ChatPage> {
                 leading: const Icon(Icons.copy),
                 title: const Text("Копировать"),
                 onTap: () {
-                  Clipboard.setData(ClipboardData(text: m['text'] ?? ""));
+                  Clipboard.setData(ClipboardData(text: msg['text'] ?? ''));
                   Navigator.pop(context);
                 },
               ),
@@ -482,25 +519,41 @@ class _ChatPageState extends State<ChatPage> {
                   title: const Text("Изменить"),
                   onTap: () {
                     Navigator.pop(context);
-                    _editMessage(m['id'], m['text'] ?? "");
+                    setState(() {
+                      _editingId = msg['id'].toString();
+                      _ctrl.text = msg['text'] ?? '';
+                    });
                   },
                 ),
               if (mine)
                 ListTile(
                   leading: const Icon(Icons.delete),
                   title: const Text("Удалить"),
-                  onTap: () {
+                  onTap: () async {
                     Navigator.pop(context);
-                    _deleteMessage(m['id']);
+                    final id = msg['id'];
+                    try {
+                      final res = await http.delete(
+                        Uri.parse("$serverBaseUrl/messages/$id"),
+                        headers: {"Authorization": "Bearer ${widget.token}"},
+                      );
+                      if (res.statusCode == 200) {
+                        await _loadMessages();
+                      } else {
+                        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Ошибка удаления: ${res.statusCode}')));
+                      }
+                    } catch (e) {
+                      debugPrint("Delete error: $e");
+                    }
                   },
                 ),
-              if (m['attachment'] != null)
+              if ((msg['attachment'] ?? '').isNotEmpty)
                 ListTile(
                   leading: const Icon(Icons.download),
                   title: const Text("Скачать файл"),
                   onTap: () {
                     Navigator.pop(context);
-                    _downloadFile(m['attachment'] as String);
+                    _downloadFile(msg['attachment']);
                   },
                 ),
             ],
@@ -510,11 +563,46 @@ class _ChatPageState extends State<ChatPage> {
     );
   }
 
+  Future<void> _logout() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('token');
+    await prefs.remove('username');
+    await prefs.setBool('notify_enabled', false);
+    if (mounted) {
+      Navigator.pushReplacement(context, const AuthPage());
+    }
+  }
+
+  Future<void> _toggleNotifications() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      _notifEnabled = !_notifEnabled;
+      prefs.setBool('notify_enabled', _notifEnabled);
+    });
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(_notifEnabled ? "Уведомления включены" : "Уведомления выключены")));
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _pollTimer?.cancel();
+    _scrollCtrl.dispose();
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  // Lifecycle для уведомлений: помечаем foreground/background
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    _appInForeground = state == AppLifecycleState.resumed;
+  }
+
   Widget _buildMessageTile(Map m) {
     final bool mine = m['user'] == widget.username;
     final bool deleted = m['deleted'] == true;
     final att = m['attachment'];
     final timeText = m['time'] != null ? DateFormat('HH:mm').format(DateTime.tryParse(m['time']) ?? DateTime.now()) : "";
+
     return GestureDetector(
       onLongPress: () => _onMessageLongPress(m),
       child: Align(
@@ -524,9 +612,9 @@ class _ChatPageState extends State<ChatPage> {
           padding: const EdgeInsets.all(12),
           constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.75),
           decoration: BoxDecoration(
-            color: mine ? Colors.teal[400] : Colors.white,
+            color: deleted ? Colors.grey[300] : (mine ? Colors.teal[400] : Colors.white),
             borderRadius: BorderRadius.circular(16),
-            boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.08), blurRadius: 5, offset: const Offset(2, 3))],
+            boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.06), blurRadius: 4, offset: const Offset(2, 3))],
           ),
           child: Column(
             crossAxisAlignment: mine ? CrossAxisAlignment.end : CrossAxisAlignment.start,
@@ -537,21 +625,30 @@ class _ChatPageState extends State<ChatPage> {
                 const Text("[удалено]", style: TextStyle(fontStyle: FontStyle.italic, color: Colors.red))
               else ...[
                 Text(m['text'] ?? "", style: TextStyle(color: mine ? Colors.white : Colors.black)),
-                if (att != null)
+                if (att != null && (att as String).isNotEmpty)
                   Padding(
                     padding: const EdgeInsets.only(top: 8),
                     child: InkWell(
-                      onTap: () => _downloadFile(att as String),
-                      child: Row(mainAxisSize: MainAxisSize.min, children: [
-                        const Icon(Icons.attach_file, size: 18, color: Colors.blue),
-                        const SizedBox(width: 6),
-                        Flexible(child: Text(att as String, overflow: TextOverflow.ellipsis)),
-                      ]),
+                      onTap: () => _downloadFile(att),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(Icons.attach_file, size: 18, color: Colors.blue),
+                          const SizedBox(width: 6),
+                          Flexible(child: Text(att, overflow: TextOverflow.ellipsis)),
+                        ],
+                      ),
                     ),
                   ),
               ],
               const SizedBox(height: 4),
-              Text(timeText, style: const TextStyle(fontSize: 10, color: Colors.black54)),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(timeText, style: const TextStyle(fontSize: 10, color: Colors.black54)),
+                  if (m['edited'] == true) const Padding(padding: EdgeInsets.only(left: 6), child: Text('изменено', style: TextStyle(fontSize: 10, fontStyle: FontStyle.italic, color: Colors.black45))),
+                ],
+              )
             ],
           ),
         ),
@@ -559,30 +656,69 @@ class _ChatPageState extends State<ChatPage> {
     );
   }
 
+  // UI
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text("Chat 2.2"),
+        title: Text("Chat — ${widget.username}"),
         actions: [
-          IconButton(onPressed: _pickAndSendFile, icon: const Icon(Icons.attach_file)),
-          IconButton(onPressed: _loadMessages, icon: const Icon(Icons.refresh)),
+          IconButton(
+            icon: const Icon(Icons.emoji_emotions_outlined),
+            onPressed: _toggleNotifications,
+            tooltip: _notifEnabled ? "Уведомления: ВКЛ" : "Уведомления: ВЫКЛ",
+          ),
+          PopupMenuButton<String>(
+            onSelected: (v) {
+              if (v == 'logout') _logout();
+            },
+            itemBuilder: (_) => [
+              const PopupMenuItem(value: 'logout', child: Text('Выйти')),
+            ],
+          )
         ],
       ),
-      body: Column(children: [
-        Expanded(
-          child: ListView.builder(controller: _scrollCtrl, itemCount: messages.length, itemBuilder: (_, i) => _buildMessageTile(messages[i] as Map)),
-        ),
-        if (_loading) const LinearProgressIndicator(),
-        SafeArea(
-          child: Row(children: [
-            Expanded(
-              child: TextField(controller: _ctrl, decoration: const InputDecoration(hintText: "Сообщение...", contentPadding: EdgeInsets.symmetric(horizontal: 12))),
+      body: Column(
+        children: [
+          Expanded(
+            child: NotificationListener<ScrollNotification>(
+              onNotification: (sn) {
+                // фикс: если пользователь начал прокручивать — устанавливаем флаг
+                if (sn is UserScrollNotification) {
+                  _userScrolledUp = _scrollCtrl.position.pixels < (_scrollCtrl.position.maxScrollExtent - 150);
+                }
+                return false;
+              },
+              child: ListView.builder(
+                controller: _scrollCtrl,
+                itemCount: messages.length,
+                itemBuilder: (_, i) => _buildMessageTile(messages[i]),
+              ),
             ),
-            IconButton(icon: const Icon(Icons.send, color: Colors.teal), onPressed: () => _sendMessage(_ctrl.text)),
-          ]),
-        ),
-      ]),
+          ),
+          if (_uploading) const LinearProgressIndicator(),
+          SafeArea(
+            child: Row(
+              children: [
+                IconButton(icon: const Icon(Icons.attach_file), onPressed: _pickAndSendFile),
+                Expanded(
+                  child: TextField(
+                    controller: _ctrl,
+                    decoration: InputDecoration(
+                      hintText: _editingId != null ? "Редактируете сообщение..." : "Сообщение...",
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 12),
+                    ),
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.send, color: Colors.teal),
+                  onPressed: () => _sendMessage(_ctrl.text),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
