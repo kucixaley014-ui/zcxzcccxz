@@ -1,11 +1,9 @@
-import 'dart:async';
 import 'dart:convert';
-
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:intl/intl.dart';
-import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:flutter/services.dart';
 
 void main() {
   runApp(const MyApp());
@@ -13,69 +11,45 @@ void main() {
 
 const String serverBaseUrl = "https://lol154.pythonanywhere.com";
 
-final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
-    FlutterLocalNotificationsPlugin();
-
-class MyApp extends StatefulWidget {
+class MyApp extends StatelessWidget {
   const MyApp({super.key});
 
-  @override
-  State<MyApp> createState() => _MyAppState();
-}
-
-class _MyAppState extends State<MyApp> {
-  bool _initialized = false;
-  Widget _startPage = const AuthPage();
-
-  @override
-  void initState() {
-    super.initState();
-    _initApp();
-  }
-
-  Future<void> _initApp() async {
-    // Уведомления
-    const AndroidInitializationSettings initSettingsAndroid =
-        AndroidInitializationSettings('@mipmap/ic_launcher');
-    const InitializationSettings initSettings =
-        InitializationSettings(android: initSettingsAndroid);
-    await flutterLocalNotificationsPlugin.initialize(initSettings);
-
+  Future<Widget> _getStartPage() async {
     final prefs = await SharedPreferences.getInstance();
-    final token = prefs.getString("token");
     final username = prefs.getString("username");
-
-    setState(() {
-      _initialized = true;
-      if (token != null && username != null) {
-        _startPage = ChatPage(username: username);
-      } else {
-        _startPage = const AuthPage();
-      }
-    });
+    if (username != null) {
+      return ChatPage(username: username);
+    }
+    return const AuthPage();
   }
 
   @override
   Widget build(BuildContext context) {
-    if (!_initialized) {
-      return const MaterialApp(
-        home: Scaffold(body: Center(child: CircularProgressIndicator())),
-      );
-    }
     return MaterialApp(
-      title: "Chat 2.4",
+      title: "Chat App",
       theme: ThemeData(
-        primarySwatch: Colors.teal,
-        scaffoldBackgroundColor: Colors.grey[100],
+        useMaterial3: true,
+        colorSchemeSeed: Colors.teal,
       ),
-      home: _startPage,
+      home: FutureBuilder(
+        future: _getStartPage(),
+        builder: (ctx, snap) {
+          if (!snap.hasData) {
+            return const Scaffold(
+              body: Center(child: CircularProgressIndicator()),
+            );
+          }
+          return snap.data as Widget;
+        },
+      ),
     );
   }
 }
 
+// -------------------- AUTH --------------------
+
 class AuthPage extends StatefulWidget {
   const AuthPage({super.key});
-
   @override
   State<AuthPage> createState() => _AuthPageState();
 }
@@ -86,13 +60,13 @@ class _AuthPageState extends State<AuthPage> {
   final _passCtrl = TextEditingController();
   bool _loading = false;
 
-  Future<void> _loginOrRegister(bool register) async {
+  Future<void> _auth(String endpoint) async {
     if (!_formKey.currentState!.validate()) return;
     setState(() => _loading = true);
 
     try {
       final res = await http.post(
-        Uri.parse("$serverBaseUrl/${register ? 'register' : 'login'}"),
+        Uri.parse("$serverBaseUrl/$endpoint"),
         headers: {"Content-Type": "application/json"},
         body: jsonEncode({
           "username": _nameCtrl.text.trim(),
@@ -116,14 +90,11 @@ class _AuthPageState extends State<AuthPage> {
         }
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-              content: Text(register
-                  ? "Ошибка регистрации"
-                  : "Неверный логин или пароль")),
+          SnackBar(content: Text("Ошибка: ${res.body}")),
         );
       }
     } catch (e) {
-      debugPrint("Ошибка: $e");
+      debugPrint("Ошибка входа: $e");
     }
 
     setState(() => _loading = false);
@@ -136,17 +107,17 @@ class _AuthPageState extends State<AuthPage> {
         child: Padding(
           padding: const EdgeInsets.all(20),
           child: Card(
-            shape:
-                RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16)),
             elevation: 6,
             child: Padding(
               padding: const EdgeInsets.all(20),
               child: Form(
                 key: _formKey,
                 child: Column(mainAxisSize: MainAxisSize.min, children: [
-                  const Text("Добро пожаловать",
-                      style:
-                          TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+                  const Text("Вход в чат",
+                      style: TextStyle(
+                          fontSize: 22, fontWeight: FontWeight.bold)),
                   const SizedBox(height: 20),
                   TextFormField(
                     controller: _nameCtrl,
@@ -163,17 +134,14 @@ class _AuthPageState extends State<AuthPage> {
                   const SizedBox(height: 20),
                   _loading
                       ? const CircularProgressIndicator()
-                      : Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceAround,
-                          children: [
-                            ElevatedButton(
-                                onPressed: () => _loginOrRegister(false),
-                                child: const Text("Войти")),
-                            ElevatedButton(
-                                onPressed: () => _loginOrRegister(true),
-                                child: const Text("Регистрация")),
-                          ],
-                        ),
+                      : Column(children: [
+                          ElevatedButton(
+                              onPressed: () => _auth("login"),
+                              child: const Text("Войти")),
+                          TextButton(
+                              onPressed: () => _auth("register"),
+                              child: const Text("Регистрация")),
+                        ])
                 ]),
               ),
             ),
@@ -183,6 +151,8 @@ class _AuthPageState extends State<AuthPage> {
     );
   }
 }
+
+// -------------------- CHAT --------------------
 
 class ChatPage extends StatefulWidget {
   final String username;
@@ -197,8 +167,7 @@ class _ChatPageState extends State<ChatPage> {
   final _scrollCtrl = ScrollController();
   List messages = [];
   String? _token;
-  Timer? _timer;
-  bool _notifyEnabled = true;
+  bool _loading = false;
 
   @override
   void initState() {
@@ -206,27 +175,20 @@ class _ChatPageState extends State<ChatPage> {
     _loadToken();
   }
 
-  @override
-  void dispose() {
-    _timer?.cancel();
-    super.dispose();
-  }
-
   Future<void> _loadToken() async {
     final prefs = await SharedPreferences.getInstance();
     _token = prefs.getString("token");
-    _notifyEnabled = prefs.getBool("notify_enabled") ?? true;
     _loadMessages();
-    _timer = Timer.periodic(const Duration(seconds: 3), (_) => _loadMessages());
   }
 
   Future<void> _logout() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.clear();
     if (mounted) {
-      Navigator.pushReplacement(
+      Navigator.pushAndRemoveUntil(
         context,
         MaterialPageRoute(builder: (_) => const AuthPage()),
+        (_) => false,
       );
     }
   }
@@ -235,51 +197,24 @@ class _ChatPageState extends State<ChatPage> {
     try {
       final res = await http.get(Uri.parse("$serverBaseUrl/messages"));
       if (res.statusCode == 200) {
-        final newMessages = jsonDecode(res.body);
+        final newMsgs = jsonDecode(res.body);
+        if (mounted) {
+          final scrollPos = _scrollCtrl.position.pixels;
+          final maxScroll = _scrollCtrl.position.maxScrollExtent;
+          final atBottom = scrollPos >= (maxScroll - 50);
 
-        // уведомления при новых сообщениях
-        if (_notifyEnabled && messages.isNotEmpty) {
-          if (newMessages.length > messages.length) {
-            final last = newMessages.last;
-            if (last['user'] != widget.username) {
-              _showNotification(
-                  "${last['user']}",
-                  "${last['text']}"
-                      .substring(0, last['text'].length.clamp(0, 30)));
-            }
+          setState(() => messages = newMsgs);
+
+          if (atBottom) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              _scrollCtrl.jumpTo(_scrollCtrl.position.maxScrollExtent);
+            });
           }
-        }
-
-        // сохраняем текущую позицию
-        final oldOffset =
-            _scrollCtrl.hasClients ? _scrollCtrl.offset : 0.0;
-
-        setState(() => messages = newMessages);
-
-        // если был вверху — оставляем там же
-        if (_scrollCtrl.hasClients) {
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (_scrollCtrl.position.maxScrollExtent >= oldOffset) {
-              _scrollCtrl.jumpTo(oldOffset);
-            }
-          });
         }
       }
     } catch (e) {
       debugPrint("Ошибка загрузки: $e");
     }
-  }
-
-  Future<void> _showNotification(String title, String body) async {
-    const androidDetails = AndroidNotificationDetails(
-      'chat_channel',
-      'Chat Messages',
-      importance: Importance.max,
-      priority: Priority.high,
-    );
-    const details = NotificationDetails(android: androidDetails);
-    await flutterLocalNotificationsPlugin.show(
-        0, title, body, details, payload: "chat");
   }
 
   Future<void> _sendMessage(String text) async {
@@ -300,58 +235,155 @@ class _ChatPageState extends State<ChatPage> {
     }
   }
 
+  Future<void> _deleteMessage(int id) async {
+    try {
+      final res = await http.delete(
+        Uri.parse("$serverBaseUrl/messages/$id"),
+        headers: {"Authorization": "Bearer $_token"},
+      );
+      if (res.statusCode == 200) {
+        _loadMessages();
+      }
+    } catch (e) {
+      debugPrint("Ошибка удаления: $e");
+    }
+  }
+
+  Future<void> _editMessage(Map m) async {
+    final ctrl = TextEditingController(text: m['text']);
+    await showDialog(
+      context: context,
+      builder: (ctx) {
+        return AlertDialog(
+          title: const Text("Изменить сообщение"),
+          content: TextField(controller: ctrl),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text("Отмена")),
+            ElevatedButton(
+              onPressed: () async {
+                try {
+                  final res = await http.put(
+                    Uri.parse("$serverBaseUrl/messages/${m['id']}"),
+                    headers: {
+                      "Content-Type": "application/json",
+                      "Authorization": "Bearer $_token",
+                    },
+                    body: jsonEncode({"text": ctrl.text}),
+                  );
+                  if (res.statusCode == 200) {
+                    Navigator.pop(ctx);
+                    _loadMessages();
+                  }
+                } catch (e) {
+                  debugPrint("Ошибка изменения: $e");
+                }
+              },
+              child: const Text("Сохранить"),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
   Widget _buildMessageTile(Map m) {
     final bool mine = m['user'] == widget.username;
     final bool deleted = m['deleted'] == true;
-
     final timeText = m['time'] != null
         ? DateFormat('HH:mm')
             .format(DateTime.tryParse(m['time']) ?? DateTime.now())
         : "";
 
-    return Align(
-      alignment: mine ? Alignment.centerRight : Alignment.centerLeft,
-      child: Container(
-        margin: const EdgeInsets.symmetric(vertical: 6, horizontal: 12),
-        padding: const EdgeInsets.all(12),
-        constraints:
-            BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.75),
-        decoration: BoxDecoration(
+    return GestureDetector(
+      onLongPress: () {
+        showModalBottomSheet(
+          context: context,
+          shape: const RoundedRectangleBorder(
+              borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
+          builder: (_) {
+            return SafeArea(
+              child: Wrap(
+                children: [
+                  if (mine && !deleted)
+                    ListTile(
+                      leading: const Icon(Icons.edit, color: Colors.teal),
+                      title: const Text("Изменить"),
+                      onTap: () {
+                        Navigator.pop(context);
+                        _editMessage(m);
+                      },
+                    ),
+                  if (mine && !deleted)
+                    ListTile(
+                      leading: const Icon(Icons.delete, color: Colors.red),
+                      title: const Text("Удалить"),
+                      onTap: () {
+                        Navigator.pop(context);
+                        _deleteMessage(m['id']);
+                      },
+                    ),
+                  ListTile(
+                    leading: const Icon(Icons.copy, color: Colors.blue),
+                    title: const Text("Скопировать"),
+                    onTap: () {
+                      Navigator.pop(context);
+                      Clipboard.setData(
+                        ClipboardData(text: m['text'] ?? ""),
+                      );
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text("Скопировано")),
+                      );
+                    },
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+      child: Align(
+        alignment: mine ? Alignment.centerRight : Alignment.centerLeft,
+        child: Card(
           color: mine ? Colors.teal[400] : Colors.white,
-          borderRadius: BorderRadius.circular(16),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.1),
-              blurRadius: 5,
-              offset: const Offset(2, 3),
-            ),
-          ],
-        ),
-        child: Column(
-          crossAxisAlignment:
-              mine ? CrossAxisAlignment.end : CrossAxisAlignment.start,
-          children: [
-            Text(
-              m['user'] ?? "Anon",
-              style: TextStyle(
-                fontWeight: FontWeight.bold,
-                color: mine ? Colors.white : Colors.teal,
-              ),
-            ),
-            const SizedBox(height: 6),
-            if (deleted)
-              const Text("[удалено]",
+          elevation: 4,
+          margin: const EdgeInsets.symmetric(vertical: 6, horizontal: 12),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              crossAxisAlignment:
+                  mine ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+              children: [
+                Text(
+                  m['user'] ?? "Anon",
                   style: TextStyle(
-                      fontStyle: FontStyle.italic, color: Colors.red))
-            else
-              Text(
-                m['text'] ?? "",
-                style: TextStyle(color: mine ? Colors.white : Colors.black),
-              ),
-            const SizedBox(height: 4),
-            Text(timeText,
-                style: const TextStyle(fontSize: 10, color: Colors.black54)),
-          ],
+                    fontWeight: FontWeight.bold,
+                    color: mine ? Colors.white : Colors.teal,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                if (deleted)
+                  const Text("[удалено]",
+                      style: TextStyle(
+                          fontStyle: FontStyle.italic, color: Colors.redAccent))
+                else
+                  Text(
+                    m['text'] ?? "",
+                    style: TextStyle(
+                        color: mine ? Colors.white : Colors.black,
+                        fontSize: 16),
+                  ),
+                const SizedBox(height: 4),
+                Text(timeText,
+                    style: TextStyle(
+                        fontSize: 11,
+                        color: mine ? Colors.white70 : Colors.black54)),
+              ],
+            ),
+          ),
         ),
       ),
     );
@@ -361,9 +393,10 @@ class _ChatPageState extends State<ChatPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text("Chat 2.4"),
+        title: const Text("Chat App"),
         actions: [
-          IconButton(onPressed: _loadMessages, icon: const Icon(Icons.refresh)),
+          IconButton(
+              onPressed: _loadMessages, icon: const Icon(Icons.refresh)),
           IconButton(onPressed: _logout, icon: const Icon(Icons.logout)),
         ],
       ),
@@ -376,6 +409,7 @@ class _ChatPageState extends State<ChatPage> {
               itemBuilder: (_, i) => _buildMessageTile(messages[i]),
             ),
           ),
+          if (_loading) const LinearProgressIndicator(),
           SafeArea(
             child: Row(
               children: [
