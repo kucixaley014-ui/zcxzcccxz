@@ -18,30 +18,35 @@ jobs:
         with:
           flutter-version: '3.24.1'
 
+      - name: Install Android SDK 35
+        run: |
+          yes | sdkmanager --licenses
+          sdkmanager "platforms;android-35" "build-tools;35.0.0"
+
       - name: Create Flutter project
         run: |
           flutter create app
           cp -r lib app/ || true
           cp pubspec.yaml app/ || true
 
-          # Добавляем INTERNET permission перед <application>
+          # Добавляем INTERNET permission
           sed -i '/<application/i\    <uses-permission android:name="android.permission.INTERNET"/>' app/android/app/src/main/AndroidManifest.xml
 
       - name: Patch Android configs
         run: |
-          # Kotlin 1.9.24
+          # Kotlin
           sed -i 's/ext.kotlin_version = .*/ext.kotlin_version = "1.9.24"/' app/android/build.gradle || true
           sed -i 's/id "org.jetbrains.kotlin.android" version ".*"/id "org.jetbrains.kotlin.android" version "1.9.24"/' app/android/settings.gradle || true
 
-          # compileSdk/targetSdk 34 (устойчивый)
-          sed -i 's/compileSdkVersion [0-9][0-9]*/compileSdkVersion 34/' app/android/app/build.gradle || true
-          sed -i 's/targetSdkVersion [0-9][0-9]*/targetSdkVersion 34/' app/android/app/build.gradle || true
+          # SDK 35
+          sed -i 's/compileSdkVersion [0-9][0-9]*/compileSdkVersion 35/' app/android/app/build.gradle || true
+          sed -i 's/targetSdkVersion [0-9][0-9]*/targetSdkVersion 35/' app/android/app/build.gradle || true
 
-          # Gradle 8.6
+          # Gradle wrapper
           mkdir -p app/android/gradle/wrapper
           echo "distributionUrl=https\\://services.gradle.org/distributions/gradle-8.6-all.zip" > app/android/gradle/wrapper/gradle-wrapper.properties
 
-          # Android Gradle Plugin 8.3.2
+          # Android Gradle Plugin
           sed -i 's/com.android.tools.build:gradle:[0-9.]\+/com.android.tools.build:gradle:8.3.2/' app/android/build.gradle || true
 
       - name: Get dependencies
