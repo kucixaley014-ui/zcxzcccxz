@@ -1,9 +1,10 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
 
+/// адрес твоего сервера Flask
 const String apiBase = "https://lol154.pythonanywhere.com";
 
 void main() {
@@ -23,7 +24,7 @@ class ChatApp extends StatelessWidget {
   }
 }
 
-/// Проверка: вошёл ли пользователь ранее
+/// проверка, вошёл ли пользователь ранее
 class RootPage extends StatefulWidget {
   const RootPage({super.key});
 
@@ -63,7 +64,7 @@ class _RootPageState extends State<RootPage> {
   }
 }
 
-/// Страница авторизации
+/// страница авторизации
 class AuthPage extends StatefulWidget {
   const AuthPage({super.key});
 
@@ -87,9 +88,11 @@ class _AuthPageState extends State<AuthPage> {
     }
 
     final url = Uri.parse("$apiBase/${isLogin ? "login" : "register"}");
-    final resp = await http.post(url,
-        headers: {"Content-Type": "application/json"},
-        body: jsonEncode({"username": username, "password": password}));
+    final resp = await http.post(
+      url,
+      headers: {"Content-Type": "application/json"},
+      body: jsonEncode({"username": username, "password": password}),
+    );
 
     if (resp.statusCode == 200 || resp.statusCode == 201) {
       final data = jsonDecode(resp.body);
@@ -101,8 +104,8 @@ class _AuthPageState extends State<AuthPage> {
           Navigator.pushReplacement(
               context,
               MaterialPageRoute(
-                  builder: (_) => ChatPage(
-                      token: data["token"], username: data["username"])));
+                  builder: (_) =>
+                      ChatPage(token: data["token"], username: data["username"])));
         }
       } else {
         setState(() => isLogin = true);
@@ -124,10 +127,17 @@ class _AuthPageState extends State<AuthPage> {
         body: Padding(
           padding: const EdgeInsets.all(16),
           child: Column(children: [
-            TextField(controller: userCtrl, decoration: const InputDecoration(labelText: "Имя")),
-            TextField(controller: passCtrl, decoration: const InputDecoration(labelText: "Пароль"), obscureText: true),
+            TextField(
+                controller: userCtrl,
+                decoration: const InputDecoration(labelText: "Имя")),
+            TextField(
+                controller: passCtrl,
+                decoration: const InputDecoration(labelText: "Пароль"),
+                obscureText: true),
             const SizedBox(height: 12),
-            ElevatedButton(onPressed: _submit, child: Text(isLogin ? "Войти" : "Зарегистрироваться")),
+            ElevatedButton(
+                onPressed: _submit,
+                child: Text(isLogin ? "Войти" : "Зарегистрироваться")),
             TextButton(
                 onPressed: () => setState(() => isLogin = !isLogin),
                 child: Text(isLogin ? "Регистрация" : "Уже есть аккаунт? Войти")),
@@ -138,7 +148,7 @@ class _AuthPageState extends State<AuthPage> {
   }
 }
 
-/// Сообщение
+/// модель сообщения
 class Message {
   final int id;
   final String user;
@@ -148,28 +158,29 @@ class Message {
   final bool deleted;
   final int? replyTo;
 
-  Message(
-      {required this.id,
-      required this.user,
-      required this.text,
-      required this.time,
-      required this.edited,
-      required this.deleted,
-      this.replyTo});
+  Message({
+    required this.id,
+    required this.user,
+    required this.text,
+    required this.time,
+    required this.edited,
+    required this.deleted,
+    this.replyTo,
+  });
 
   factory Message.fromJson(Map<String, dynamic> j) {
     return Message(
         id: j["id"],
         user: j["user"],
-        text: j["text"],
-        time: j["time"],
-        edited: j["edited"],
-        deleted: j["deleted"],
+        text: j["text"] ?? "",
+        time: j["time"] ?? "",
+        edited: j["edited"] ?? false,
+        deleted: j["deleted"] ?? false,
         replyTo: j["reply_to"]);
   }
 }
 
-/// Чат
+/// страница чата
 class ChatPage extends StatefulWidget {
   final String token;
   final String username;
@@ -201,35 +212,53 @@ class _ChatPageState extends State<ChatPage> {
   }
 
   Future<void> _loadMessages() async {
-    final resp = await http.get(Uri.parse("$apiBase/messages"));
-    if (resp.statusCode == 200) {
-      final data = jsonDecode(resp.body) as List;
-      final newMsgs = data.map((j) => Message.fromJson(j)).toList();
-      if (messages.isNotEmpty && newMsgs.length > messages.length && !scrollCtrl.position.atEdge) {
-        if (notificationsEnabled && mounted) {
-          final last = newMsgs.last;
-          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text("Новое сообщение от ${last.user}: ${last.text.length > 20 ? last.text.substring(0, 20) + "..." : last.text}"),
-          ));
+    try {
+      final resp = await http.get(Uri.parse("$apiBase/messages"));
+      if (resp.statusCode == 200) {
+        final data = jsonDecode(resp.body) as List;
+        final newMsgs = data.map((j) => Message.fromJson(j)).toList();
+
+        if (messages.isNotEmpty &&
+            newMsgs.length > messages.length &&
+            !scrollCtrl.position.atEdge) {
+          if (notificationsEnabled && mounted) {
+            final last = newMsgs.last;
+            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+              content: Text(
+                  "Новое сообщение от ${last.user}: ${last.text.length > 20 ? last.text.substring(0, 20) + "..." : last.text}"),
+            ));
+          }
         }
+        setState(() => messages = newMsgs);
       }
-      setState(() => messages = newMsgs);
+    } catch (e) {
+      debugPrint("Ошибка загрузки: $e");
     }
   }
 
   Future<void> _sendMessage() async {
     final text = msgCtrl.text.trim();
     if (text.isEmpty) return;
+
     msgCtrl.clear();
-    final resp = await http.post(Uri.parse("$apiBase/messages"),
-        headers: {
-          "Authorization": "Bearer ${widget.token}",
-          "Content-Type": "application/json"
-        },
-        body: jsonEncode({"text": text, "reply_to": replyTo}));
+
+    final resp = await http.post(
+      Uri.parse("$apiBase/messages"),
+      headers: {
+        "Authorization": "Bearer ${widget.token}",
+        "Content-Type": "application/json"
+      },
+      body: jsonEncode({"text": text, "reply_to": replyTo}),
+    );
+
     if (resp.statusCode == 201) {
-      _loadMessages();
       setState(() => replyTo = null);
+      await _loadMessages();
+      if (scrollCtrl.hasClients) {
+        scrollCtrl.jumpTo(scrollCtrl.position.maxScrollExtent);
+      }
+    } else {
+      debugPrint("Ошибка отправки: ${resp.body}");
     }
   }
 
@@ -250,7 +279,12 @@ class _ChatPageState extends State<ChatPage> {
         ? messages.where((x) => x.id == m.replyTo).toList()
         : [];
     return ListTile(
-      title: Text("${m.user}: ${m.text}"),
+      title: Text(
+        m.deleted ? "[удалено]" : "${m.user}: ${m.text}",
+        style: TextStyle(
+            color: m.deleted ? Colors.red : Colors.black,
+            fontStyle: m.deleted ? FontStyle.italic : FontStyle.normal),
+      ),
       subtitle: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -262,7 +296,7 @@ class _ChatPageState extends State<ChatPage> {
       ),
       onLongPress: m.deleted
           ? null
-          : () => setState(() => replyTo = m.id), // Ответить
+          : () => setState(() => replyTo = m.id), // выбрать для ответа
     );
   }
 
@@ -273,7 +307,7 @@ class _ChatPageState extends State<ChatPage> {
           IconButton(
               onPressed: () =>
                   setState(() => notificationsEnabled = !notificationsEnabled),
-              icon: const Icon(Icons.emoji_emotions)),
+              icon: const Icon(Icons.notifications)),
           IconButton(onPressed: _logout, icon: const Icon(Icons.exit_to_app))
         ]),
         body: Column(children: [
