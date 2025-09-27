@@ -27,12 +27,22 @@ jobs:
           # Добавляем INTERNET permission перед <application>
           sed -i '/<application/i\    <uses-permission android:name="android.permission.INTERNET"/>' app/android/app/src/main/AndroidManifest.xml
 
-      - name: Patch Kotlin version
+      - name: Patch Android configs
         run: |
-          # В build.gradle обновляем ext.kotlin_version на 1.9.24
+          # Kotlin 1.9.24
           sed -i 's/ext.kotlin_version = .*/ext.kotlin_version = "1.9.24"/' app/android/build.gradle || true
-          # В settings.gradle тоже обновляем, если есть блок plugins
           sed -i 's/id "org.jetbrains.kotlin.android" version ".*"/id "org.jetbrains.kotlin.android" version "1.9.24"/' app/android/settings.gradle || true
+
+          # compileSdk/targetSdk 34 (устойчивый)
+          sed -i 's/compileSdkVersion [0-9][0-9]*/compileSdkVersion 34/' app/android/app/build.gradle || true
+          sed -i 's/targetSdkVersion [0-9][0-9]*/targetSdkVersion 34/' app/android/app/build.gradle || true
+
+          # Gradle 8.6
+          mkdir -p app/android/gradle/wrapper
+          echo "distributionUrl=https\\://services.gradle.org/distributions/gradle-8.6-all.zip" > app/android/gradle/wrapper/gradle-wrapper.properties
+
+          # Android Gradle Plugin 8.3.2
+          sed -i 's/com.android.tools.build:gradle:[0-9.]\+/com.android.tools.build:gradle:8.3.2/' app/android/build.gradle || true
 
       - name: Get dependencies
         working-directory: app
