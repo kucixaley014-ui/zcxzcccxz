@@ -48,19 +48,41 @@ class _AuthPageState extends State<AuthPage> {
 
   Future<void> _login() async {
     if (!_formKey.currentState!.validate()) return;
-
     setState(() => _loading = true);
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString("username", _nameCtrl.text.trim());
 
-    if (mounted) {
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(
-          builder: (_) => ChatPage(username: _nameCtrl.text.trim()),
-        ),
+    try {
+      final res = await http.post(
+        Uri.parse("$serverBaseUrl/login"),
+        headers: {"Content-Type": "application/json"},
+        body: jsonEncode({
+          "username": _nameCtrl.text.trim(),
+          "password": _passCtrl.text.trim(),
+        }),
       );
+
+      if (res.statusCode == 200) {
+        final data = jsonDecode(res.body);
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString("token", data["token"]);
+        await prefs.setString("username", data["username"]);
+
+        if (mounted) {
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(
+              builder: (_) => ChatPage(username: data["username"]),
+            ),
+          );
+        }
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Неверный логин или пароль")),
+        );
+      }
+    } catch (e) {
+      debugPrint("Ошибка входа: $e");
     }
+
     setState(() => _loading = false);
   }
 
@@ -71,14 +93,17 @@ class _AuthPageState extends State<AuthPage> {
         child: Padding(
           padding: const EdgeInsets.all(20),
           child: Card(
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
             elevation: 6,
             child: Padding(
               padding: const EdgeInsets.all(20),
               child: Form(
                 key: _formKey,
                 child: Column(mainAxisSize: MainAxisSize.min, children: [
-                  const Text("Вход в чат", style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+                  const Text("Вход в чат",
+                      style:
+                          TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
                   const SizedBox(height: 20),
                   TextFormField(
                     controller: _nameCtrl,
@@ -96,9 +121,7 @@ class _AuthPageState extends State<AuthPage> {
                   _loading
                       ? const CircularProgressIndicator()
                       : ElevatedButton(
-                          onPressed: _login,
-                          child: const Text("Войти"),
-                        ),
+                          onPressed: _login, child: const Text("Войти")),
                 ]),
               ),
             ),
@@ -122,10 +145,17 @@ class _ChatPageState extends State<ChatPage> {
   final _scrollCtrl = ScrollController();
   List messages = [];
   bool _loading = false;
+  String? _token;
 
   @override
   void initState() {
     super.initState();
+    _loadToken();
+  }
+
+  Future<void> _loadToken() async {
+    final prefs = await SharedPreferences.getInstance();
+    _token = prefs.getString("token");
     _loadMessages();
   }
 
@@ -145,8 +175,11 @@ class _ChatPageState extends State<ChatPage> {
     try {
       await http.post(
         Uri.parse("$serverBaseUrl/messages"),
-        headers: {"Content-Type": "application/json"},
-        body: jsonEncode({"user": widget.username, "text": text}),
+        headers: {
+          "Content-Type": "application/json",
+          if (_token != null) "Authorization": "Bearer $_token"
+        },
+        body: jsonEncode({"text": text}),
       );
       _ctrl.clear();
       await _loadMessages();
@@ -169,19 +202,15 @@ class _ChatPageState extends State<ChatPage> {
       final dio = Dio();
       final formData = FormData.fromMap({
         "file": await MultipartFile.fromFile(filePath, filename: fileName),
-        "user": widget.username,
         "text": fileName,
       });
 
       await dio.post(
         "$serverBaseUrl/messages",
         data: formData,
-        onSendProgress: (sent, total) {
-          final progress = (sent / total * 100).toStringAsFixed(0);
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text("Загрузка $progress%")),
-          );
-        },
+        options: Options(headers: {
+          if (_token != null) "Authorization": "Bearer $_token"
+        }),
       );
 
       await _loadMessages();
@@ -227,71 +256,24 @@ class _ChatPageState extends State<ChatPage> {
     }
   }
 
-  void _showMessageOptions(Map msg) {
-    final mine = msg['user'] == widget.username;
-    showModalBottomSheet(
-      context: context,
-      builder: (_) {
-        return Wrap(
-          children: [
-            ListTile(
-              leading: const Icon(Icons.copy),
-              title: const Text("Копировать"),
-              onTap: () {
-                Clipboard.setData(ClipboardData(text: msg['text']));
-                Navigator.pop(context);
-              },
-            ),
-            if (mine)
-              ListTile(
-                leading: const Icon(Icons.edit),
-                title: const Text("Изменить"),
-                onTap: () {
-                  Navigator.pop(context);
-                  _ctrl.text = msg['text'];
-                },
-              ),
-            if (mine)
-              ListTile(
-                leading: const Icon(Icons.delete),
-                title: const Text("Удалить"),
-                onTap: () {
-                  Navigator.pop(context);
-                  setState(() => msg['deleted'] = true);
-                },
-              ),
-            if (msg['attachment'] != null)
-              ListTile(
-                leading: const Icon(Icons.download),
-                title: const Text("Скачать файл"),
-                onTap: () {
-                  Navigator.pop(context);
-                  _downloadFile(msg['attachment']);
-                },
-              ),
-          ],
-        );
-      },
-    );
-  }
-
   Widget _buildMessageTile(Map m) {
     final bool mine = m['user'] == widget.username;
     final bool deleted = m['deleted'] == true;
     final att = m['attachment'];
 
     final timeText = m['time'] != null
-        ? DateFormat('HH:mm').format(DateTime.tryParse(m['time']) ?? DateTime.now())
+        ? DateFormat('HH:mm')
+            .format(DateTime.tryParse(m['time']) ?? DateTime.now())
         : "";
 
     return GestureDetector(
-      onLongPress: () => _showMessageOptions(m),
       child: Align(
         alignment: mine ? Alignment.centerRight : Alignment.centerLeft,
         child: Container(
           margin: const EdgeInsets.symmetric(vertical: 6, horizontal: 12),
           padding: const EdgeInsets.all(12),
-          constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.75),
+          constraints: BoxConstraints(
+              maxWidth: MediaQuery.of(context).size.width * 0.75),
           decoration: BoxDecoration(
             color: mine ? Colors.teal[400] : Colors.white,
             borderRadius: BorderRadius.circular(16),
@@ -304,7 +286,8 @@ class _ChatPageState extends State<ChatPage> {
             ],
           ),
           child: Column(
-            crossAxisAlignment: mine ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+            crossAxisAlignment:
+                mine ? CrossAxisAlignment.end : CrossAxisAlignment.start,
             children: [
               Text(
                 m['user'] ?? "Anon",
@@ -315,7 +298,9 @@ class _ChatPageState extends State<ChatPage> {
               ),
               const SizedBox(height: 6),
               if (deleted)
-                const Text("[удалено]", style: TextStyle(fontStyle: FontStyle.italic, color: Colors.red))
+                const Text("[удалено]",
+                    style:
+                        TextStyle(fontStyle: FontStyle.italic, color: Colors.red))
               else ...[
                 Text(
                   m['text'] ?? "",
@@ -329,16 +314,21 @@ class _ChatPageState extends State<ChatPage> {
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          const Icon(Icons.attach_file, size: 18, color: Colors.blue),
+                          const Icon(Icons.attach_file,
+                              size: 18, color: Colors.blue),
                           const SizedBox(width: 6),
-                          Flexible(child: Text(att, overflow: TextOverflow.ellipsis)),
+                          Flexible(
+                              child:
+                                  Text(att, overflow: TextOverflow.ellipsis)),
                         ],
                       ),
                     ),
                   ),
               ],
               const SizedBox(height: 4),
-              Text(timeText, style: const TextStyle(fontSize: 10, color: Colors.black54)),
+              Text(timeText,
+                  style:
+                      const TextStyle(fontSize: 10, color: Colors.black54)),
             ],
           ),
         ),
