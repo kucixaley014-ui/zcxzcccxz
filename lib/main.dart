@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
@@ -9,7 +10,6 @@ import 'package:dio/dio.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
-import 'package:flutter/services.dart';
 
 void main() {
   runApp(const MyApp());
@@ -23,7 +23,7 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: "Chat 2.1",
+      title: "Chat 2.2",
       theme: ThemeData(
         primarySwatch: Colors.teal,
         scaffoldBackgroundColor: Colors.grey[100],
@@ -33,6 +33,7 @@ class MyApp extends StatelessWidget {
   }
 }
 
+// ---------------- ЭКРАН АВТОРИЗАЦИИ ----------------
 class AuthPage extends StatefulWidget {
   const AuthPage({super.key});
 
@@ -86,6 +87,13 @@ class _AuthPageState extends State<AuthPage> {
     setState(() => _loading = false);
   }
 
+  void _goRegister() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const RegisterPage()),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -120,8 +128,15 @@ class _AuthPageState extends State<AuthPage> {
                   const SizedBox(height: 20),
                   _loading
                       ? const CircularProgressIndicator()
-                      : ElevatedButton(
-                          onPressed: _login, child: const Text("Войти")),
+                      : Column(
+                          children: [
+                            ElevatedButton(
+                                onPressed: _login, child: const Text("Войти")),
+                            TextButton(
+                                onPressed: _goRegister,
+                                child: const Text("Регистрация")),
+                          ],
+                        ),
                 ]),
               ),
             ),
@@ -132,6 +147,85 @@ class _AuthPageState extends State<AuthPage> {
   }
 }
 
+// ---------------- ЭКРАН РЕГИСТРАЦИИ ----------------
+class RegisterPage extends StatefulWidget {
+  const RegisterPage({super.key});
+
+  @override
+  State<RegisterPage> createState() => _RegisterPageState();
+}
+
+class _RegisterPageState extends State<RegisterPage> {
+  final _formKey = GlobalKey<FormState>();
+  final _nameCtrl = TextEditingController();
+  final _passCtrl = TextEditingController();
+  bool _loading = false;
+
+  Future<void> _register() async {
+    if (!_formKey.currentState!.validate()) return;
+    setState(() => _loading = true);
+
+    try {
+      final res = await http.post(
+        Uri.parse("$serverBaseUrl/register"),
+        headers: {"Content-Type": "application/json"},
+        body: jsonEncode({
+          "username": _nameCtrl.text.trim(),
+          "password": _passCtrl.text.trim(),
+        }),
+      );
+
+      if (res.statusCode == 200) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Регистрация успешна, войдите")),
+        );
+        Navigator.pop(context);
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Ошибка регистрации")),
+        );
+      }
+    } catch (e) {
+      debugPrint("Ошибка регистрации: $e");
+    }
+
+    setState(() => _loading = false);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text("Регистрация")),
+      body: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Form(
+          key: _formKey,
+          child: Column(children: [
+            TextFormField(
+              controller: _nameCtrl,
+              decoration: const InputDecoration(labelText: "Имя"),
+              validator: (v) => v!.isEmpty ? "Введите имя" : null,
+            ),
+            const SizedBox(height: 10),
+            TextFormField(
+              controller: _passCtrl,
+              obscureText: true,
+              decoration: const InputDecoration(labelText: "Пароль"),
+              validator: (v) => v!.isEmpty ? "Введите пароль" : null,
+            ),
+            const SizedBox(height: 20),
+            _loading
+                ? const CircularProgressIndicator()
+                : ElevatedButton(
+                    onPressed: _register, child: const Text("Зарегистрироваться")),
+          ]),
+        ),
+      ),
+    );
+  }
+}
+
+// ---------------- ЧАТ ----------------
 class ChatPage extends StatefulWidget {
   final String username;
   const ChatPage({super.key, required this.username});
@@ -146,11 +240,19 @@ class _ChatPageState extends State<ChatPage> {
   List messages = [];
   bool _loading = false;
   String? _token;
+  Timer? _timer;
 
   @override
   void initState() {
     super.initState();
     _loadToken();
+    _timer = Timer.periodic(const Duration(seconds: 3), (_) => _loadMessages());
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
   }
 
   Future<void> _loadToken() async {
@@ -186,6 +288,52 @@ class _ChatPageState extends State<ChatPage> {
       _scrollCtrl.jumpTo(_scrollCtrl.position.maxScrollExtent);
     } catch (e) {
       debugPrint("Ошибка отправки: $e");
+    }
+  }
+
+  Future<void> _deleteMessage(int id) async {
+    try {
+      await http.delete(
+        Uri.parse("$serverBaseUrl/messages/$id"),
+        headers: {if (_token != null) "Authorization": "Bearer $_token"},
+      );
+      await _loadMessages();
+    } catch (e) {
+      debugPrint("Ошибка удаления: $e");
+    }
+  }
+
+  Future<void> _editMessage(int id, String oldText) async {
+    final controller = TextEditingController(text: oldText);
+
+    final newText = await showDialog<String>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text("Редактировать сообщение"),
+        content: TextField(controller: controller),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text("Отмена")),
+          TextButton(
+              onPressed: () => Navigator.pop(context, controller.text),
+              child: const Text("Сохранить")),
+        ],
+      ),
+    );
+
+    if (newText == null || newText.trim().isEmpty) return;
+
+    try {
+      await http.put(
+        Uri.parse("$serverBaseUrl/messages/$id"),
+        headers: {
+          "Content-Type": "application/json",
+          if (_token != null) "Authorization": "Bearer $_token"
+        },
+        body: jsonEncode({"text": newText}),
+      );
+      await _loadMessages();
+    } catch (e) {
+      debugPrint("Ошибка редактирования: $e");
     }
   }
 
@@ -238,14 +386,6 @@ class _ChatPageState extends State<ChatPage> {
       await dio.download(
         "$serverBaseUrl/files/$filename",
         savePath,
-        onReceiveProgress: (received, total) {
-          if (total != -1) {
-            final progress = (received / total * 100).toStringAsFixed(0);
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text("Скачивание $progress%")),
-            );
-          }
-        },
       );
 
       ScaffoldMessenger.of(context).showSnackBar(
@@ -267,13 +407,43 @@ class _ChatPageState extends State<ChatPage> {
         : "";
 
     return GestureDetector(
+      onLongPress: mine && !deleted
+          ? () {
+              showModalBottomSheet(
+                context: context,
+                builder: (_) => SafeArea(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      ListTile(
+                        leading: const Icon(Icons.edit),
+                        title: const Text("Редактировать"),
+                        onTap: () {
+                          Navigator.pop(context);
+                          _editMessage(m['id'], m['text'] ?? "");
+                        },
+                      ),
+                      ListTile(
+                        leading: const Icon(Icons.delete),
+                        title: const Text("Удалить"),
+                        onTap: () {
+                          Navigator.pop(context);
+                          _deleteMessage(m['id']);
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            }
+          : null,
       child: Align(
         alignment: mine ? Alignment.centerRight : Alignment.centerLeft,
         child: Container(
           margin: const EdgeInsets.symmetric(vertical: 6, horizontal: 12),
           padding: const EdgeInsets.all(12),
-          constraints: BoxConstraints(
-              maxWidth: MediaQuery.of(context).size.width * 0.75),
+          constraints:
+              BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.75),
           decoration: BoxDecoration(
             color: mine ? Colors.teal[400] : Colors.white,
             borderRadius: BorderRadius.circular(16),
@@ -299,8 +469,8 @@ class _ChatPageState extends State<ChatPage> {
               const SizedBox(height: 6),
               if (deleted)
                 const Text("[удалено]",
-                    style:
-                        TextStyle(fontStyle: FontStyle.italic, color: Colors.red))
+                    style: TextStyle(
+                        fontStyle: FontStyle.italic, color: Colors.red))
               else ...[
                 Text(
                   m['text'] ?? "",
@@ -317,9 +487,7 @@ class _ChatPageState extends State<ChatPage> {
                           const Icon(Icons.attach_file,
                               size: 18, color: Colors.blue),
                           const SizedBox(width: 6),
-                          Flexible(
-                              child:
-                                  Text(att, overflow: TextOverflow.ellipsis)),
+                          Flexible(child: Text(att, overflow: TextOverflow.ellipsis)),
                         ],
                       ),
                     ),
@@ -327,8 +495,7 @@ class _ChatPageState extends State<ChatPage> {
               ],
               const SizedBox(height: 4),
               Text(timeText,
-                  style:
-                      const TextStyle(fontSize: 10, color: Colors.black54)),
+                  style: const TextStyle(fontSize: 10, color: Colors.black54)),
             ],
           ),
         ),
@@ -340,9 +507,10 @@ class _ChatPageState extends State<ChatPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text("Chat 2.1"),
+        title: const Text("Chat 2.2"),
         actions: [
-          IconButton(onPressed: _pickAndSendFile, icon: const Icon(Icons.attach_file)),
+          IconButton(
+              onPressed: _pickAndSendFile, icon: const Icon(Icons.attach_file)),
           IconButton(onPressed: _loadMessages, icon: const Icon(Icons.refresh)),
         ],
       ),
