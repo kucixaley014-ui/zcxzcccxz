@@ -18,50 +18,31 @@ jobs:
         with:
           flutter-version: '3.24.1'
 
-      - name: Install Android SDK 35
-        run: |
-          # Скачиваем SDK Command-line Tools
-          wget https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip -O cmdline-tools.zip
-          mkdir -p $HOME/android-sdk/cmdline-tools
-          unzip -q cmdline-tools.zip -d $HOME/android-sdk/cmdline-tools
-          mv $HOME/android-sdk/cmdline-tools/cmdline-tools $HOME/android-sdk/cmdline-tools/latest
-          export ANDROID_SDK_ROOT=$HOME/android-sdk
-          export PATH=$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$ANDROID_SDK_ROOT/platform-tools:$PATH
-
-          # Принимаем лицензии
-          yes | sdkmanager --licenses
-
-          # Ставим SDK 35 и build-tools
-          sdkmanager "platforms;android-35" "build-tools;35.0.0" "platform-tools"
-
-          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT" >> $GITHUB_ENV
-          echo "PATH=$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$ANDROID_SDK_ROOT/platform-tools:$PATH" >> $GITHUB_ENV
-
       - name: Create Flutter project
         run: |
           flutter create app
           cp -r lib app/ || true
           cp pubspec.yaml app/ || true
 
-          # INTERNET permission
+          # Добавляем INTERNET permission
           sed -i '/<application/i\    <uses-permission android:name="android.permission.INTERNET"/>' app/android/app/src/main/AndroidManifest.xml
 
-      - name: Patch Android configs
+      - name: Patch Kotlin & Gradle
         run: |
-          # Kotlin
+          # Kotlin 1.9.24
           sed -i 's/ext.kotlin_version = .*/ext.kotlin_version = "1.9.24"/' app/android/build.gradle || true
           sed -i 's/id "org.jetbrains.kotlin.android" version ".*"/id "org.jetbrains.kotlin.android" version "1.9.24"/' app/android/settings.gradle || true
 
-          # SDK 35
-          sed -i 's/compileSdkVersion [0-9][0-9]*/compileSdkVersion 35/' app/android/app/build.gradle || true
-          sed -i 's/targetSdkVersion [0-9][0-9]*/targetSdkVersion 35/' app/android/app/build.gradle || true
+          # Android Gradle Plugin 8.3.2
+          sed -i 's/com.android.tools.build:gradle:[0-9.]*/com.android.tools.build:gradle:8.3.2/' app/android/build.gradle || true
 
-          # Gradle wrapper
+          # Gradle Wrapper 8.6
           mkdir -p app/android/gradle/wrapper
           echo "distributionUrl=https\\://services.gradle.org/distributions/gradle-8.6-all.zip" > app/android/gradle/wrapper/gradle-wrapper.properties
 
-          # Android Gradle Plugin
-          sed -i 's/com.android.tools.build:gradle:[0-9.]\+/com.android.tools.build:gradle:8.3.2/' app/android/build.gradle || true
+          # compileSdk / targetSdk = 35
+          sed -i 's/compileSdkVersion [0-9][0-9]*/compileSdkVersion 35/' app/android/app/build.gradle || true
+          sed -i 's/targetSdkVersion [0-9][0-9]*/targetSdkVersion 35/' app/android/app/build.gradle || true
 
       - name: Get dependencies
         working-directory: app
