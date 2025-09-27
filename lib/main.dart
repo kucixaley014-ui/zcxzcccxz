@@ -1,70 +1,78 @@
 import 'dart:async';
 import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
-
-/// адрес твоего сервера Flask
-const String apiBase = "https://lol154.pythonanywhere.com";
+import 'package:intl/intl.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
 void main() {
-  runApp(const ChatApp());
+  runApp(const MyApp());
 }
 
-class ChatApp extends StatelessWidget {
-  const ChatApp({super.key});
+const String serverBaseUrl = "https://lol154.pythonanywhere.com";
+
+final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
+    FlutterLocalNotificationsPlugin();
+
+class MyApp extends StatefulWidget {
+  const MyApp({super.key});
 
   @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Chat App',
-      theme: ThemeData(primarySwatch: Colors.blue),
-      home: const RootPage(),
-    );
-  }
+  State<MyApp> createState() => _MyAppState();
 }
 
-/// проверка, вошёл ли пользователь ранее
-class RootPage extends StatefulWidget {
-  const RootPage({super.key});
-
-  @override
-  State<RootPage> createState() => _RootPageState();
-}
-
-class _RootPageState extends State<RootPage> {
-  String? token;
-  String? username;
+class _MyAppState extends State<MyApp> {
+  bool _initialized = false;
+  Widget _startPage = const AuthPage();
 
   @override
   void initState() {
     super.initState();
-    _loadPrefs();
+    _initApp();
   }
 
-  Future<void> _loadPrefs() async {
+  Future<void> _initApp() async {
+    // Уведомления
+    const AndroidInitializationSettings initSettingsAndroid =
+        AndroidInitializationSettings('@mipmap/ic_launcher');
+    const InitializationSettings initSettings =
+        InitializationSettings(android: initSettingsAndroid);
+    await flutterLocalNotificationsPlugin.initialize(initSettings);
+
     final prefs = await SharedPreferences.getInstance();
-    final t = prefs.getString("token");
-    final u = prefs.getString("username");
-    if (t != null && u != null) {
-      setState(() {
-        token = t;
-        username = u;
-      });
-    }
+    final token = prefs.getString("token");
+    final username = prefs.getString("username");
+
+    setState(() {
+      _initialized = true;
+      if (token != null && username != null) {
+        _startPage = ChatPage(username: username);
+      } else {
+        _startPage = const AuthPage();
+      }
+    });
   }
 
   @override
   Widget build(BuildContext context) {
-    if (token != null && username != null) {
-      return ChatPage(token: token!, username: username!);
-    } else {
-      return const AuthPage();
+    if (!_initialized) {
+      return const MaterialApp(
+        home: Scaffold(body: Center(child: CircularProgressIndicator())),
+      );
     }
+    return MaterialApp(
+      title: "Chat 2.4",
+      theme: ThemeData(
+        primarySwatch: Colors.teal,
+        scaffoldBackgroundColor: Colors.grey[100],
+      ),
+      home: _startPage,
+    );
   }
 }
 
-/// страница авторизации
 class AuthPage extends StatefulWidget {
   const AuthPage({super.key});
 
@@ -73,269 +81,322 @@ class AuthPage extends StatefulWidget {
 }
 
 class _AuthPageState extends State<AuthPage> {
-  final TextEditingController userCtrl = TextEditingController();
-  final TextEditingController passCtrl = TextEditingController();
-  bool isLogin = true;
-  String error = "";
+  final _formKey = GlobalKey<FormState>();
+  final _nameCtrl = TextEditingController();
+  final _passCtrl = TextEditingController();
+  bool _loading = false;
 
-  Future<void> _submit() async {
-    setState(() => error = "");
-    final username = userCtrl.text.trim();
-    final password = passCtrl.text.trim();
-    if (username.isEmpty || password.isEmpty) {
-      setState(() => error = "Введите имя и пароль");
-      return;
-    }
+  Future<void> _loginOrRegister(bool register) async {
+    if (!_formKey.currentState!.validate()) return;
+    setState(() => _loading = true);
 
-    final url = Uri.parse("$apiBase/${isLogin ? "login" : "register"}");
-    final resp = await http.post(
-      url,
-      headers: {"Content-Type": "application/json"},
-      body: jsonEncode({"username": username, "password": password}),
-    );
+    try {
+      final res = await http.post(
+        Uri.parse("$serverBaseUrl/${register ? 'register' : 'login'}"),
+        headers: {"Content-Type": "application/json"},
+        body: jsonEncode({
+          "username": _nameCtrl.text.trim(),
+          "password": _passCtrl.text.trim(),
+        }),
+      );
 
-    if (resp.statusCode == 200 || resp.statusCode == 201) {
-      final data = jsonDecode(resp.body);
-      if (isLogin) {
+      if (res.statusCode == 200) {
+        final data = jsonDecode(res.body);
         final prefs = await SharedPreferences.getInstance();
         await prefs.setString("token", data["token"]);
         await prefs.setString("username", data["username"]);
+
         if (mounted) {
           Navigator.pushReplacement(
-              context,
-              MaterialPageRoute(
-                  builder: (_) =>
-                      ChatPage(token: data["token"], username: data["username"])));
+            context,
+            MaterialPageRoute(
+              builder: (_) => ChatPage(username: data["username"]),
+            ),
+          );
         }
       } else {
-        setState(() => isLogin = true);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+              content: Text(register
+                  ? "Ошибка регистрации"
+                  : "Неверный логин или пароль")),
+        );
       }
-    } else {
-      try {
-        final data = jsonDecode(resp.body);
-        setState(() => error = data["error"] ?? "Ошибка");
-      } catch (_) {
-        setState(() => error = "Ошибка сервера");
-      }
+    } catch (e) {
+      debugPrint("Ошибка: $e");
     }
+
+    setState(() => _loading = false);
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-        appBar: AppBar(title: Text(isLogin ? "Вход" : "Регистрация")),
-        body: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(children: [
-            TextField(
-                controller: userCtrl,
-                decoration: const InputDecoration(labelText: "Имя")),
-            TextField(
-                controller: passCtrl,
-                decoration: const InputDecoration(labelText: "Пароль"),
-                obscureText: true),
-            const SizedBox(height: 12),
-            ElevatedButton(
-                onPressed: _submit,
-                child: Text(isLogin ? "Войти" : "Зарегистрироваться")),
-            TextButton(
-                onPressed: () => setState(() => isLogin = !isLogin),
-                child: Text(isLogin ? "Регистрация" : "Уже есть аккаунт? Войти")),
-            if (error.isNotEmpty)
-              Text(error, style: const TextStyle(color: Colors.red)),
-          ]),
-        ));
+      body: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Card(
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            elevation: 6,
+            child: Padding(
+              padding: const EdgeInsets.all(20),
+              child: Form(
+                key: _formKey,
+                child: Column(mainAxisSize: MainAxisSize.min, children: [
+                  const Text("Добро пожаловать",
+                      style:
+                          TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 20),
+                  TextFormField(
+                    controller: _nameCtrl,
+                    decoration: const InputDecoration(labelText: "Имя"),
+                    validator: (v) => v!.isEmpty ? "Введите имя" : null,
+                  ),
+                  const SizedBox(height: 10),
+                  TextFormField(
+                    controller: _passCtrl,
+                    obscureText: true,
+                    decoration: const InputDecoration(labelText: "Пароль"),
+                    validator: (v) => v!.isEmpty ? "Введите пароль" : null,
+                  ),
+                  const SizedBox(height: 20),
+                  _loading
+                      ? const CircularProgressIndicator()
+                      : Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceAround,
+                          children: [
+                            ElevatedButton(
+                                onPressed: () => _loginOrRegister(false),
+                                child: const Text("Войти")),
+                            ElevatedButton(
+                                onPressed: () => _loginOrRegister(true),
+                                child: const Text("Регистрация")),
+                          ],
+                        ),
+                ]),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
   }
 }
 
-/// модель сообщения
-class Message {
-  final int id;
-  final String user;
-  final String text;
-  final String time;
-  final bool edited;
-  final bool deleted;
-  final int? replyTo;
-
-  Message({
-    required this.id,
-    required this.user,
-    required this.text,
-    required this.time,
-    required this.edited,
-    required this.deleted,
-    this.replyTo,
-  });
-
-  factory Message.fromJson(Map<String, dynamic> j) {
-    return Message(
-        id: j["id"],
-        user: j["user"],
-        text: j["text"] ?? "",
-        time: j["time"] ?? "",
-        edited: j["edited"] ?? false,
-        deleted: j["deleted"] ?? false,
-        replyTo: j["reply_to"]);
-  }
-}
-
-/// страница чата
 class ChatPage extends StatefulWidget {
-  final String token;
   final String username;
-  const ChatPage({super.key, required this.token, required this.username});
+  const ChatPage({super.key, required this.username});
 
   @override
   State<ChatPage> createState() => _ChatPageState();
 }
 
 class _ChatPageState extends State<ChatPage> {
-  final TextEditingController msgCtrl = TextEditingController();
-  final ScrollController scrollCtrl = ScrollController();
-  Timer? timer;
-  List<Message> messages = [];
-  int? replyTo;
-  bool notificationsEnabled = true;
+  final _ctrl = TextEditingController();
+  final _scrollCtrl = ScrollController();
+  List messages = [];
+  String? _token;
+  Timer? _timer;
+  bool _notifyEnabled = true;
 
   @override
   void initState() {
     super.initState();
-    _loadMessages();
-    timer = Timer.periodic(const Duration(seconds: 3), (_) => _loadMessages());
+    _loadToken();
   }
 
   @override
   void dispose() {
-    timer?.cancel();
+    _timer?.cancel();
     super.dispose();
+  }
+
+  Future<void> _loadToken() async {
+    final prefs = await SharedPreferences.getInstance();
+    _token = prefs.getString("token");
+    _notifyEnabled = prefs.getBool("notify_enabled") ?? true;
+    _loadMessages();
+    _timer = Timer.periodic(const Duration(seconds: 3), (_) => _loadMessages());
+  }
+
+  Future<void> _logout() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.clear();
+    if (mounted) {
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (_) => const AuthPage()),
+      );
+    }
   }
 
   Future<void> _loadMessages() async {
     try {
-      final resp = await http.get(Uri.parse("$apiBase/messages"));
-      if (resp.statusCode == 200) {
-        final data = jsonDecode(resp.body) as List;
-        final newMsgs = data.map((j) => Message.fromJson(j)).toList();
+      final res = await http.get(Uri.parse("$serverBaseUrl/messages"));
+      if (res.statusCode == 200) {
+        final newMessages = jsonDecode(res.body);
 
-        if (messages.isNotEmpty &&
-            newMsgs.length > messages.length &&
-            !scrollCtrl.position.atEdge) {
-          if (notificationsEnabled && mounted) {
-            final last = newMsgs.last;
-            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-              content: Text(
-                  "Новое сообщение от ${last.user}: ${last.text.length > 20 ? last.text.substring(0, 20) + "..." : last.text}"),
-            ));
+        // уведомления при новых сообщениях
+        if (_notifyEnabled && messages.isNotEmpty) {
+          if (newMessages.length > messages.length) {
+            final last = newMessages.last;
+            if (last['user'] != widget.username) {
+              _showNotification(
+                  "${last['user']}",
+                  "${last['text']}"
+                      .substring(0, last['text'].length.clamp(0, 30)));
+            }
           }
         }
-        setState(() => messages = newMsgs);
+
+        // сохраняем текущую позицию
+        final oldOffset =
+            _scrollCtrl.hasClients ? _scrollCtrl.offset : 0.0;
+
+        setState(() => messages = newMessages);
+
+        // если был вверху — оставляем там же
+        if (_scrollCtrl.hasClients) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (_scrollCtrl.position.maxScrollExtent >= oldOffset) {
+              _scrollCtrl.jumpTo(oldOffset);
+            }
+          });
+        }
       }
     } catch (e) {
       debugPrint("Ошибка загрузки: $e");
     }
   }
 
-  Future<void> _sendMessage() async {
-    final text = msgCtrl.text.trim();
-    if (text.isEmpty) return;
-
-    msgCtrl.clear();
-
-    final resp = await http.post(
-      Uri.parse("$apiBase/messages"),
-      headers: {
-        "Authorization": "Bearer ${widget.token}",
-        "Content-Type": "application/json"
-      },
-      body: jsonEncode({"text": text, "reply_to": replyTo}),
+  Future<void> _showNotification(String title, String body) async {
+    const androidDetails = AndroidNotificationDetails(
+      'chat_channel',
+      'Chat Messages',
+      importance: Importance.max,
+      priority: Priority.high,
     );
+    const details = NotificationDetails(android: androidDetails);
+    await flutterLocalNotificationsPlugin.show(
+        0, title, body, details, payload: "chat");
+  }
 
-    if (resp.statusCode == 201) {
-      setState(() => replyTo = null);
+  Future<void> _sendMessage(String text) async {
+    if (text.trim().isEmpty) return;
+    try {
+      await http.post(
+        Uri.parse("$serverBaseUrl/messages"),
+        headers: {
+          "Content-Type": "application/json",
+          if (_token != null) "Authorization": "Bearer $_token"
+        },
+        body: jsonEncode({"text": text}),
+      );
+      _ctrl.clear();
       await _loadMessages();
-      if (scrollCtrl.hasClients) {
-        scrollCtrl.jumpTo(scrollCtrl.position.maxScrollExtent);
-      }
-    } else {
-      debugPrint("Ошибка отправки: ${resp.body}");
+    } catch (e) {
+      debugPrint("Ошибка отправки: $e");
     }
   }
 
-  Future<void> _logout() async {
-    await http.post(Uri.parse("$apiBase/logout"),
-        headers: {"Authorization": "Bearer ${widget.token}"});
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove("token");
-    await prefs.remove("username");
-    if (mounted) {
-      Navigator.pushReplacement(
-          context, MaterialPageRoute(builder: (_) => const AuthPage()));
-    }
-  }
+  Widget _buildMessageTile(Map m) {
+    final bool mine = m['user'] == widget.username;
+    final bool deleted = m['deleted'] == true;
 
-  Widget _msgTile(Message m) {
-    final reply = m.replyTo != null
-        ? messages.where((x) => x.id == m.replyTo).toList()
-        : [];
-    return ListTile(
-      title: Text(
-        m.deleted ? "[удалено]" : "${m.user}: ${m.text}",
-        style: TextStyle(
-            color: m.deleted ? Colors.red : Colors.black,
-            fontStyle: m.deleted ? FontStyle.italic : FontStyle.normal),
+    final timeText = m['time'] != null
+        ? DateFormat('HH:mm')
+            .format(DateTime.tryParse(m['time']) ?? DateTime.now())
+        : "";
+
+    return Align(
+      alignment: mine ? Alignment.centerRight : Alignment.centerLeft,
+      child: Container(
+        margin: const EdgeInsets.symmetric(vertical: 6, horizontal: 12),
+        padding: const EdgeInsets.all(12),
+        constraints:
+            BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.75),
+        decoration: BoxDecoration(
+          color: mine ? Colors.teal[400] : Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.1),
+              blurRadius: 5,
+              offset: const Offset(2, 3),
+            ),
+          ],
+        ),
+        child: Column(
+          crossAxisAlignment:
+              mine ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+          children: [
+            Text(
+              m['user'] ?? "Anon",
+              style: TextStyle(
+                fontWeight: FontWeight.bold,
+                color: mine ? Colors.white : Colors.teal,
+              ),
+            ),
+            const SizedBox(height: 6),
+            if (deleted)
+              const Text("[удалено]",
+                  style: TextStyle(
+                      fontStyle: FontStyle.italic, color: Colors.red))
+            else
+              Text(
+                m['text'] ?? "",
+                style: TextStyle(color: mine ? Colors.white : Colors.black),
+              ),
+            const SizedBox(height: 4),
+            Text(timeText,
+                style: const TextStyle(fontSize: 10, color: Colors.black54)),
+          ],
+        ),
       ),
-      subtitle: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          if (reply.isNotEmpty)
-            Text("↪ ${reply.first.user}: ${reply.first.text}",
-                style: const TextStyle(fontStyle: FontStyle.italic)),
-          Text(m.time),
-        ],
-      ),
-      onLongPress: m.deleted
-          ? null
-          : () => setState(() => replyTo = m.id), // выбрать для ответа
     );
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-        appBar: AppBar(title: Text("Чат (${widget.username})"), actions: [
-          IconButton(
-              onPressed: () =>
-                  setState(() => notificationsEnabled = !notificationsEnabled),
-              icon: const Icon(Icons.notifications)),
-          IconButton(onPressed: _logout, icon: const Icon(Icons.exit_to_app))
-        ]),
-        body: Column(children: [
-          if (replyTo != null)
-            Container(
-              color: Colors.grey[300],
-              child: Row(children: [
-                Expanded(
-                    child: Text(
-                        "Ответ на: ${messages.firstWhere((m) => m.id == replyTo).text}")),
-                IconButton(
-                    onPressed: () => setState(() => replyTo = null),
-                    icon: const Icon(Icons.close))
-              ]),
-            ),
+      appBar: AppBar(
+        title: const Text("Chat 2.4"),
+        actions: [
+          IconButton(onPressed: _loadMessages, icon: const Icon(Icons.refresh)),
+          IconButton(onPressed: _logout, icon: const Icon(Icons.logout)),
+        ],
+      ),
+      body: Column(
+        children: [
           Expanded(
-              child: ListView.builder(
-                  controller: scrollCtrl,
-                  reverse: false,
-                  itemCount: messages.length,
-                  itemBuilder: (_, i) => _msgTile(messages[i]))),
-          Row(children: [
-            Expanded(
-                child: TextField(
-                    controller: msgCtrl,
-                    decoration: const InputDecoration(hintText: "Сообщение"))),
-            IconButton(onPressed: _sendMessage, icon: const Icon(Icons.send))
-          ])
-        ]));
+            child: ListView.builder(
+              controller: _scrollCtrl,
+              itemCount: messages.length,
+              itemBuilder: (_, i) => _buildMessageTile(messages[i]),
+            ),
+          ),
+          SafeArea(
+            child: Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _ctrl,
+                    decoration: const InputDecoration(
+                      hintText: "Сообщение...",
+                      contentPadding: EdgeInsets.symmetric(horizontal: 12),
+                    ),
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.send, color: Colors.teal),
+                  onPressed: () => _sendMessage(_ctrl.text),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
