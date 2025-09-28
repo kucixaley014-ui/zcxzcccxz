@@ -24,30 +24,35 @@ jobs:
           cp -r lib app/ || true
           cp pubspec.yaml app/ || true
 
-          # Добавляем разрешения (INTERNET + STORAGE + NOTIFICATIONS + RECORD_AUDIO)
+          # Добавляем INTERNET + STORAGE + NOTIFICATIONS + AUDIO
           sed -i '/<application/i\    <uses-permission android:name="android.permission.INTERNET"/>' app/android/app/src/main/AndroidManifest.xml
           sed -i '/<application/i\    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"/>' app/android/app/src/main/AndroidManifest.xml
           sed -i '/<application/i\    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"/>' app/android/app/src/main/AndroidManifest.xml
           sed -i '/<application/i\    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>' app/android/app/src/main/AndroidManifest.xml
           sed -i '/<application/i\    <uses-permission android:name="android.permission.RECORD_AUDIO"/>' app/android/app/src/main/AndroidManifest.xml
 
-          # Обновляем compileSdk и targetSdk в app/build.gradle
+          # Обновляем compileSdk и targetSdk
           sed -i 's/compileSdkVersion [0-9]\+/compileSdkVersion 35/' app/android/app/build.gradle || true
           sed -i 's/targetSdkVersion [0-9]\+/targetSdkVersion 35/' app/android/app/build.gradle || true
 
-          # Пробрасываем compileSdkVersion = 35 во все subprojects (для record_android и др.)
-          if ! grep -q "compileSdkVersion" app/android/build.gradle; then
-            sed -i '/subprojects {/a\    afterEvaluate { project ->\n        if (project.hasProperty("android")) {\n            project.android.compileSdkVersion = 35\n        }\n    }' app/android/build.gradle
-          fi
-
-          # Если Gradle использует namespace, задаем его
+          # Если Gradle без namespace, добавим
           if ! grep -q "namespace" app/android/app/build.gradle; then
             echo 'android { namespace "com.example.app" }' >> app/android/app/build.gradle
           fi
 
+      - name: Clean pub cache
+        run: rm -rf ~/.pub-cache
+
       - name: Get dependencies
         working-directory: app
         run: flutter pub get
+
+      - name: Patch record_android build.gradle (fix flutter.sourceDirs issue)
+        run: |
+          for f in $(find ~/.pub-cache -path "*/record_android-*/android/build.gradle"); do
+            echo "Patching $f"
+            sed -i 's/flutter\.sourceDirs/["src\/main\/java"]/g' "$f"
+          done
 
       - name: Build APK
         working-directory: app
