@@ -1,8 +1,8 @@
 name: hello_flutter
-description: A simple chat app with Flask backend (v2.3)
+description: A simple chat app with Flask backend (v2.4)
 publish_to: 'none'
 
-version: 2.3.0+1
+version: 2.4.0+1
 
 environment:
   sdk: ">=3.5.0 <4.0.0"
@@ -11,14 +11,16 @@ dependencies:
   flutter:
     sdk: flutter
   http: ^1.2.2
+  dio: ^5.7.0
   shared_preferences: ^2.2.3
   intl: ^0.19.0
-  dio: ^5.7.0
   file_picker: ^8.0.3
   path_provider: ^2.1.4
   permission_handler: ^11.3.1
   flutter_local_notifications: ^17.2.3
-  workmanager: ^0.5.1   # 👈 нужно для фоновой отправки сообщений
+  workmanager: ^0.5.1
+  record: ^5.1.2
+  audioplayers: ^5.2.1
 
 dev_dependencies:
   flutter_test:
