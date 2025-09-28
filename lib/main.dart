@@ -5,24 +5,12 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:intl/intl.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
-void main() async {
-  WidgetsFlutterBinding.ensureInitialized();
-
-  // Инициализация уведомлений
-  const android = AndroidInitializationSettings('@mipmap/ic_launcher');
-  const initSettings = InitializationSettings(android: android);
-  await flutterLocalNotificationsPlugin.initialize(initSettings);
-
+void main() {
   runApp(const MyApp());
 }
 
 const String serverBaseUrl = "https://lol154.pythonanywhere.com";
-
-// глобальная переменная уведомлений
-final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
-    FlutterLocalNotificationsPlugin();
 
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
@@ -88,6 +76,7 @@ class _AuthPageState extends State<AuthPage> {
       );
 
       if (res.statusCode == 200 || res.statusCode == 201) {
+        // 👆 считаем успехом и 200, и 201
         final data = jsonDecode(res.body);
         final prefs = await SharedPreferences.getInstance();
         await prefs.setString("token", data["token"]);
@@ -182,13 +171,13 @@ class _ChatPageState extends State<ChatPage> {
   String? _token;
   bool _loading = false;
   Timer? _timer; // автообновление
-  Set<int> notifiedIds = {}; // чтобы не дублировать уведомления
 
   @override
   void initState() {
     super.initState();
     _loadToken();
 
+    // автообновление каждые 3 секунды
     _timer = Timer.periodic(const Duration(seconds: 3), (_) {
       _loadMessages();
     });
@@ -241,49 +230,10 @@ class _ChatPageState extends State<ChatPage> {
             }
           });
         }
-
-        // Проверяем новые сообщения для уведомлений
-        for (var m in newMsgs) {
-          if (m['id'] != null &&
-              !notifiedIds.contains(m['id']) &&
-              m['user'] != widget.username) {
-            DateTime msgTime =
-                DateTime.tryParse(m['time'] ?? "") ?? DateTime.now();
-            msgTime = msgTime.add(const Duration(hours: 3));
-
-            final now = DateTime.now();
-            if (msgTime.year == now.year &&
-                msgTime.month == now.month &&
-                msgTime.day == now.day &&
-                msgTime.hour == now.hour &&
-                msgTime.minute == now.minute) {
-              _showNotification(m['user'] ?? "Anon", m['text'] ?? "");
-              notifiedIds.add(m['id']);
-            }
-          }
-        }
       }
     } catch (e) {
       debugPrint("Ошибка загрузки: $e");
     }
-  }
-
-  Future<void> _showNotification(String title, String body) async {
-    const android = AndroidNotificationDetails(
-      'chat_channel',
-      'Chat Notifications',
-      importance: Importance.max,
-      priority: Priority.high,
-      showWhen: true,
-    );
-    const details = NotificationDetails(android: android);
-
-    await flutterLocalNotificationsPlugin.show(
-      DateTime.now().millisecondsSinceEpoch ~/ 1000,
-      title,
-      body,
-      details,
-    );
   }
 
   Future<void> _sendMessage(String text) async {
@@ -384,47 +334,96 @@ class _ChatPageState extends State<ChatPage> {
 
     DateTime msgTime =
         DateTime.tryParse(m['time'] ?? "") ?? DateTime.now();
-    msgTime = msgTime.add(const Duration(hours: 3));
+    msgTime = msgTime.add(const Duration(hours: 3)); // +3 часа
     final timeText = DateFormat('HH:mm').format(msgTime);
 
-    return Align(
-      alignment: mine ? Alignment.centerRight : Alignment.centerLeft,
-      child: Card(
-        color: mine ? Colors.teal[400] : Colors.white,
-        elevation: 4,
-        margin: const EdgeInsets.symmetric(vertical: 6, horizontal: 12),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
-        child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: Column(
-            crossAxisAlignment:
-                mine ? CrossAxisAlignment.end : CrossAxisAlignment.start,
-            children: [
-              Text(
-                m['user'] ?? "Anon",
-                style: TextStyle(
-                  fontWeight: FontWeight.bold,
-                  color: mine ? Colors.white : Colors.teal,
-                ),
+    return GestureDetector(
+      onLongPress: () {
+        showModalBottomSheet(
+          context: context,
+          shape: const RoundedRectangleBorder(
+              borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
+          builder: (_) {
+            return SafeArea(
+              child: Wrap(
+                children: [
+                  if (mine && !deleted)
+                    ListTile(
+                      leading: const Icon(Icons.edit, color: Colors.teal),
+                      title: const Text("Изменить"),
+                      onTap: () {
+                        Navigator.pop(context);
+                        _editMessage(m);
+                      },
+                    ),
+                  if (mine && !deleted)
+                    ListTile(
+                      leading: const Icon(Icons.delete, color: Colors.red),
+                      title: const Text("Удалить"),
+                      onTap: () {
+                        Navigator.pop(context);
+                        _deleteMessage(m['id']);
+                      },
+                    ),
+                  ListTile(
+                    leading: const Icon(Icons.copy, color: Colors.blue),
+                    title: const Text("Скопировать"),
+                    onTap: () {
+                      Navigator.pop(context);
+                      Clipboard.setData(
+                        ClipboardData(text: m['text'] ?? ""),
+                      );
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text("Скопировано")),
+                      );
+                    },
+                  ),
+                ],
               ),
-              const SizedBox(height: 6),
-              if (deleted)
-                const Text("[удалено]",
-                    style: TextStyle(
-                        fontStyle: FontStyle.italic, color: Colors.redAccent))
-              else
+            );
+          },
+        );
+      },
+      child: Align(
+        alignment: mine ? Alignment.centerRight : Alignment.centerLeft,
+        child: Card(
+          color: mine ? Colors.teal[400] : Colors.white,
+          elevation: 4,
+          margin: const EdgeInsets.symmetric(vertical: 6, horizontal: 12),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              crossAxisAlignment:
+                  mine ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+              children: [
                 Text(
-                  m['text'] ?? "",
+                  m['user'] ?? "Anon",
                   style: TextStyle(
-                      color: mine ? Colors.white : Colors.black,
-                      fontSize: 16),
+                    fontWeight: FontWeight.bold,
+                    color: mine ? Colors.white : Colors.teal,
+                  ),
                 ),
-              const SizedBox(height: 4),
-              Text(timeText,
-                  style: TextStyle(
-                      fontSize: 11,
-                      color: mine ? Colors.white70 : Colors.black54)),
-            ],
+                const SizedBox(height: 6),
+                if (deleted)
+                  const Text("[удалено]",
+                      style: TextStyle(
+                          fontStyle: FontStyle.italic, color: Colors.redAccent))
+                else
+                  Text(
+                    m['text'] ?? "",
+                    style: TextStyle(
+                        color: mine ? Colors.white : Colors.black,
+                        fontSize: 16),
+                  ),
+                const SizedBox(height: 4),
+                Text(timeText,
+                    style: TextStyle(
+                        fontSize: 11,
+                        color: mine ? Colors.white70 : Colors.black54)),
+              ],
+            ),
           ),
         ),
       ),
@@ -439,7 +438,8 @@ class _ChatPageState extends State<ChatPage> {
       appBar: AppBar(
         title: const Text("Chat App"),
         actions: [
-          IconButton(onPressed: _loadMessages, icon: const Icon(Icons.refresh)),
+          IconButton(
+              onPressed: _loadMessages, icon: const Icon(Icons.refresh)),
           IconButton(onPressed: _logout, icon: const Icon(Icons.logout)),
         ],
       ),
@@ -457,6 +457,7 @@ class _ChatPageState extends State<ChatPage> {
 
                 Widget msgWidget = _buildMessageTile(m);
 
+                // если день изменился → вставляем разделитель
                 if (lastDate == null ||
                     lastDate!.year != msgTime.year ||
                     lastDate!.month != msgTime.month ||
