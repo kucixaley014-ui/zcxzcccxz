@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
@@ -168,11 +169,25 @@ class _ChatPageState extends State<ChatPage> {
   List messages = [];
   String? _token;
   bool _loading = false;
+  Timer? _timer; // автообновление
 
   @override
   void initState() {
     super.initState();
     _loadToken();
+
+    // автообновление каждые 3 секунды
+    _timer = Timer.periodic(const Duration(seconds: 3), (_) {
+      _loadMessages();
+    });
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    _scrollCtrl.dispose();
+    _ctrl.dispose();
+    super.dispose();
   }
 
   Future<void> _loadToken() async {
@@ -198,18 +213,23 @@ class _ChatPageState extends State<ChatPage> {
       final res = await http.get(Uri.parse("$serverBaseUrl/messages"));
       if (res.statusCode == 200) {
         final newMsgs = jsonDecode(res.body);
-        if (mounted) {
-          final scrollPos = _scrollCtrl.position.pixels;
-          final maxScroll = _scrollCtrl.position.maxScrollExtent;
-          final atBottom = scrollPos >= (maxScroll - 50);
 
-          setState(() => messages = newMsgs);
+        if (!mounted) return;
 
-          if (atBottom) {
-            WidgetsBinding.instance.addPostFrameCallback((_) {
+        // проверяем где находится пользователь
+        final scrollPos = _scrollCtrl.position.pixels;
+        final maxScroll = _scrollCtrl.position.maxScrollExtent;
+        final atBottom = scrollPos >= (maxScroll - 50);
+
+        setState(() => messages = newMsgs);
+
+        // если внизу → скроллим вниз
+        if (atBottom) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (_scrollCtrl.hasClients) {
               _scrollCtrl.jumpTo(_scrollCtrl.position.maxScrollExtent);
-            });
-          }
+            }
+          });
         }
       }
     } catch (e) {
