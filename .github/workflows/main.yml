@@ -42,6 +42,13 @@ jobs:
         working-directory: app
         run: flutter pub get
 
+      - name: Patch old plugins (file_picker & record_android)
+        run: |
+          for f in $(find ~/.pub-cache -path "*/file_picker-*/android/build.gradle" -o -path "*/record_android-*/android/build.gradle"); do
+            echo "Patching $f"
+            sed -i 's/flutter\.sourceDirs/["src\/main\/java"]/g' "$f"
+          done
+
       - name: Add Android permissions
         run: |
           sed -i '/<application/i\    <uses-permission android:name="android.permission.INTERNET"/>' app/android/app/src/main/AndroidManifest.xml
