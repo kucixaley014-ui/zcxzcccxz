@@ -18,13 +18,16 @@ jobs:
         with:
           flutter-version: '3.24.3'
 
+      - name: Clean Flutter pub cache
+        run: rm -rf ~/.pub-cache
+
       - name: Create Flutter project
         run: |
           flutter create app
           cp -r lib app/ || true
           cp pubspec.yaml app/ || true
 
-          # Добавляем INTERNET + STORAGE + NOTIFICATIONS + AUDIO
+          # Добавляем разрешения: INTERNET + STORAGE + NOTIFICATIONS + RECORD_AUDIO
           sed -i '/<application/i\    <uses-permission android:name="android.permission.INTERNET"/>' app/android/app/src/main/AndroidManifest.xml
           sed -i '/<application/i\    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"/>' app/android/app/src/main/AndroidManifest.xml
           sed -i '/<application/i\    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"/>' app/android/app/src/main/AndroidManifest.xml
@@ -40,25 +43,19 @@ jobs:
             echo 'android { namespace "com.example.app" }' >> app/android/app/build.gradle
           fi
 
-      - name: Clean pub cache
-        run: rm -rf ~/.pub-cache
-
-      - name: Get dependencies
+      - name: Get Flutter dependencies
         working-directory: app
         run: flutter pub get
 
-      - name: Patch record_android build.gradle (fix flutter.sourceDirs issue)
-        run: |
-          for f in $(find ~/.pub-cache -path "*/record_android-*/android/build.gradle"); do
-            echo "Patching $f"
-            sed -i 's/flutter\.sourceDirs/["src\/main\/java"]/g' "$f"
-          done
+      - name: Upgrade packages automatically
+        working-directory: app
+        run: flutter pub upgrade --major-versions
 
-      - name: Build APK
+      - name: Build APK release
         working-directory: app
         run: flutter build apk --release
 
-      - name: Upload APK
+      - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: release-apk
