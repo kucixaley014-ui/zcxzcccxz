@@ -75,7 +75,8 @@ class _AuthPageState extends State<AuthPage> {
         }),
       );
 
-      if (res.statusCode == 200) {
+      if (res.statusCode == 200 || res.statusCode == 201) {
+        // 👆 считаем успехом и 200, и 201
         final data = jsonDecode(res.body);
         final prefs = await SharedPreferences.getInstance();
         await prefs.setString("token", data["token"]);
@@ -216,14 +217,12 @@ class _ChatPageState extends State<ChatPage> {
 
         if (!mounted) return;
 
-        // проверяем где находится пользователь
         final scrollPos = _scrollCtrl.position.pixels;
         final maxScroll = _scrollCtrl.position.maxScrollExtent;
         final atBottom = scrollPos >= (maxScroll - 50);
 
         setState(() => messages = newMsgs);
 
-        // если внизу → скроллим вниз
         if (atBottom) {
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if (_scrollCtrl.hasClients) {
@@ -308,13 +307,35 @@ class _ChatPageState extends State<ChatPage> {
     );
   }
 
+  Widget _buildDayDivider(DateTime date) {
+    final dayText = DateFormat("yyyy-MM-dd").format(date);
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: 12),
+      child: Row(
+        children: [
+          const Expanded(child: Divider(thickness: 1)),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            child: Text(
+              dayText,
+              style: const TextStyle(
+                  fontWeight: FontWeight.bold, color: Colors.black),
+            ),
+          ),
+          const Expanded(child: Divider(thickness: 1)),
+        ],
+      ),
+    );
+  }
+
   Widget _buildMessageTile(Map m) {
     final bool mine = m['user'] == widget.username;
     final bool deleted = m['deleted'] == true;
-    final timeText = m['time'] != null
-        ? DateFormat('HH:mm')
-            .format(DateTime.tryParse(m['time']) ?? DateTime.now())
-        : "";
+
+    DateTime msgTime =
+        DateTime.tryParse(m['time'] ?? "") ?? DateTime.now();
+    msgTime = msgTime.add(const Duration(hours: 3)); // +3 часа
+    final timeText = DateFormat('HH:mm').format(msgTime);
 
     return GestureDetector(
       onLongPress: () {
@@ -411,6 +432,8 @@ class _ChatPageState extends State<ChatPage> {
 
   @override
   Widget build(BuildContext context) {
+    DateTime? lastDate;
+
     return Scaffold(
       appBar: AppBar(
         title: const Text("Chat App"),
@@ -426,7 +449,30 @@ class _ChatPageState extends State<ChatPage> {
             child: ListView.builder(
               controller: _scrollCtrl,
               itemCount: messages.length,
-              itemBuilder: (_, i) => _buildMessageTile(messages[i]),
+              itemBuilder: (_, i) {
+                final m = messages[i];
+                DateTime msgTime =
+                    DateTime.tryParse(m['time'] ?? "") ?? DateTime.now();
+                msgTime = msgTime.add(const Duration(hours: 3));
+
+                Widget msgWidget = _buildMessageTile(m);
+
+                // если день изменился → вставляем разделитель
+                if (lastDate == null ||
+                    lastDate!.year != msgTime.year ||
+                    lastDate!.month != msgTime.month ||
+                    lastDate!.day != msgTime.day) {
+                  lastDate = msgTime;
+                  return Column(
+                    children: [
+                      _buildDayDivider(msgTime),
+                      msgWidget,
+                    ],
+                  );
+                }
+
+                return msgWidget;
+              },
             ),
           ),
           if (_loading) const LinearProgressIndicator(),
