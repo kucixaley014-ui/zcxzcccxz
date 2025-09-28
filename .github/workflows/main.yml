@@ -31,9 +31,14 @@ jobs:
           sed -i '/<application/i\    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>' app/android/app/src/main/AndroidManifest.xml
           sed -i '/<application/i\    <uses-permission android:name="android.permission.RECORD_AUDIO"/>' app/android/app/src/main/AndroidManifest.xml
 
-          # Обновляем compileSdk и targetSdk
-          sed -i 's/compileSdkVersion [0-9]\+/compileSdkVersion 34/' app/android/app/build.gradle || true
-          sed -i 's/targetSdkVersion [0-9]\+/targetSdkVersion 34/' app/android/app/build.gradle || true
+          # Обновляем compileSdk и targetSdk в app/build.gradle
+          sed -i 's/compileSdkVersion [0-9]\+/compileSdkVersion 35/' app/android/app/build.gradle || true
+          sed -i 's/targetSdkVersion [0-9]\+/targetSdkVersion 35/' app/android/app/build.gradle || true
+
+          # Пробрасываем compileSdkVersion = 35 во все subprojects (для record_android и др.)
+          if ! grep -q "compileSdkVersion" app/android/build.gradle; then
+            sed -i '/subprojects {/a\    afterEvaluate { project ->\n        if (project.hasProperty("android")) {\n            project.android.compileSdkVersion = 35\n        }\n    }' app/android/build.gradle
+          fi
 
           # Если Gradle использует namespace, задаем его
           if ! grep -q "namespace" app/android/app/build.gradle; then
