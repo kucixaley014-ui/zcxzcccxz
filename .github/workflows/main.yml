@@ -42,9 +42,13 @@ jobs:
         working-directory: app
         run: flutter pub get
 
-      - name: Patch old plugins (file_picker & record_android)
+      - name: Upgrade packages to latest compatible
+        working-directory: app
+        run: flutter pub upgrade --major-versions
+
+      - name: Patch old plugins (record_android & file_picker)
         run: |
-          for f in $(find ~/.pub-cache -path "*/file_picker-*/android/build.gradle" -o -path "*/record_android-*/android/build.gradle"); do
+          for f in $(find ~/.pub-cache -path "*/record_android-*/android/build.gradle" -o -path "*/file_picker-*/android/build.gradle"); do
             echo "Patching $f"
             sed -i 's/flutter\.sourceDirs/["src\/main\/java"]/g' "$f"
           done
