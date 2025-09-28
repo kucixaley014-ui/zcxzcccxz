@@ -1,16 +1,22 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:intl/intl.dart';
 import 'package:flutter/services.dart';
+import 'package:permission_handler/permission_handler.dart';
+import 'package:record/record.dart';
+import 'package:audioplayers/audioplayers.dart';
+import 'package:path_provider/path_provider.dart';
 
 void main() {
   runApp(const MyApp());
 }
 
-const String serverBaseUrl = "https://lol154.pythonanywhere.com";
+const String serverBaseUrl = "https://lol154.pythonanywhere.com"; // локально для эмулятора
 
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
@@ -76,7 +82,6 @@ class _AuthPageState extends State<AuthPage> {
       );
 
       if (res.statusCode == 200 || res.statusCode == 201) {
-        // 👆 считаем успехом и 200, и 201
         final data = jsonDecode(res.body);
         final prefs = await SharedPreferences.getInstance();
         await prefs.setString("token", data["token"]);
@@ -169,15 +174,17 @@ class _ChatPageState extends State<ChatPage> {
   final _scrollCtrl = ScrollController();
   List messages = [];
   String? _token;
-  bool _loading = false;
-  Timer? _timer; // автообновление
+  Timer? _timer;
+  final _recorder = Record();
+  final _player = AudioPlayer();
+  bool _recording = false;
+  String? _recordPath;
+  bool _previewMode = false;
 
   @override
   void initState() {
     super.initState();
     _loadToken();
-
-    // автообновление каждые 3 секунды
     _timer = Timer.periodic(const Duration(seconds: 3), (_) {
       _loadMessages();
     });
@@ -188,6 +195,8 @@ class _ChatPageState extends State<ChatPage> {
     _timer?.cancel();
     _scrollCtrl.dispose();
     _ctrl.dispose();
+    _recorder.dispose();
+    _player.dispose();
     super.dispose();
   }
 
@@ -214,21 +223,20 @@ class _ChatPageState extends State<ChatPage> {
       final res = await http.get(Uri.parse("$serverBaseUrl/messages"));
       if (res.statusCode == 200) {
         final newMsgs = jsonDecode(res.body);
+        if (mounted) {
+          final scrollPos = _scrollCtrl.position.pixels;
+          final maxScroll = _scrollCtrl.position.maxScrollExtent;
+          final atBottom = scrollPos >= (maxScroll - 50);
 
-        if (!mounted) return;
+          setState(() => messages = newMsgs);
 
-        final scrollPos = _scrollCtrl.position.pixels;
-        final maxScroll = _scrollCtrl.position.maxScrollExtent;
-        final atBottom = scrollPos >= (maxScroll - 50);
-
-        setState(() => messages = newMsgs);
-
-        if (atBottom) {
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (_scrollCtrl.hasClients) {
-              _scrollCtrl.jumpTo(_scrollCtrl.position.maxScrollExtent);
-            }
-          });
+          if (atBottom) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (_scrollCtrl.hasClients) {
+                _scrollCtrl.jumpTo(_scrollCtrl.position.maxScrollExtent);
+              }
+            });
+          }
         }
       }
     } catch (e) {
@@ -254,76 +262,57 @@ class _ChatPageState extends State<ChatPage> {
     }
   }
 
-  Future<void> _deleteMessage(int id) async {
+  Future<void> _sendVoice(String path) async {
     try {
-      final res = await http.delete(
-        Uri.parse("$serverBaseUrl/messages/$id"),
-        headers: {"Authorization": "Bearer $_token"},
+      final req = http.MultipartRequest(
+        "POST",
+        Uri.parse("$serverBaseUrl/messages"),
       );
-      if (res.statusCode == 200) {
+      if (_token != null) {
+        req.headers["Authorization"] = "Bearer $_token";
+      }
+      req.files.add(await http.MultipartFile.fromPath("file", path));
+      final res = await req.send();
+      if (res.statusCode == 201) {
         _loadMessages();
       }
     } catch (e) {
-      debugPrint("Ошибка удаления: $e");
+      debugPrint("Ошибка отправки голосового: $e");
     }
   }
 
-  Future<void> _editMessage(Map m) async {
-    final ctrl = TextEditingController(text: m['text']);
-    await showDialog(
-      context: context,
-      builder: (ctx) {
-        return AlertDialog(
-          title: const Text("Изменить сообщение"),
-          content: TextField(controller: ctrl),
-          actions: [
-            TextButton(
-                onPressed: () => Navigator.pop(ctx),
-                child: const Text("Отмена")),
-            ElevatedButton(
-              onPressed: () async {
-                try {
-                  final res = await http.put(
-                    Uri.parse("$serverBaseUrl/messages/${m['id']}"),
-                    headers: {
-                      "Content-Type": "application/json",
-                      "Authorization": "Bearer $_token",
-                    },
-                    body: jsonEncode({"text": ctrl.text}),
-                  );
-                  if (res.statusCode == 200) {
-                    Navigator.pop(ctx);
-                    _loadMessages();
-                  }
-                } catch (e) {
-                  debugPrint("Ошибка изменения: $e");
-                }
-              },
-              child: const Text("Сохранить"),
-            ),
-          ],
-        );
-      },
-    );
+  Future<void> _startRecording() async {
+    var status = await Permission.microphone.request();
+    if (!status.isGranted) return;
+
+    final dir = await getTemporaryDirectory();
+    final path = "${dir.path}/${DateTime.now().millisecondsSinceEpoch}.m4a";
+    await _recorder.start(path: path);
+    setState(() {
+      _recording = true;
+      _recordPath = path;
+      _previewMode = false;
+    });
   }
 
-  Widget _buildDayDivider(DateTime date) {
-    final dayText = DateFormat("yyyy-MM-dd").format(date);
+  Future<void> _stopRecording() async {
+    final path = await _recorder.stop();
+    if (path != null) {
+      setState(() {
+        _recording = false;
+        _previewMode = true; // после записи → режим предпрослушки
+      });
+    }
+  }
+
+  Widget _buildDateSeparator(DateTime date) {
+    final text = DateFormat("yyyy-MM-dd").format(date);
     return Container(
-      margin: const EdgeInsets.symmetric(vertical: 12),
-      child: Row(
-        children: [
-          const Expanded(child: Divider(thickness: 1)),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8),
-            child: Text(
-              dayText,
-              style: const TextStyle(
-                  fontWeight: FontWeight.bold, color: Colors.black),
-            ),
-          ),
-          const Expanded(child: Divider(thickness: 1)),
-        ],
+      margin: const EdgeInsets.symmetric(vertical: 10),
+      child: Center(
+        child: Text(text,
+            style: const TextStyle(
+                fontWeight: FontWeight.bold, color: Colors.black)),
       ),
     );
   }
@@ -331,99 +320,61 @@ class _ChatPageState extends State<ChatPage> {
   Widget _buildMessageTile(Map m) {
     final bool mine = m['user'] == widget.username;
     final bool deleted = m['deleted'] == true;
+    final msgType = m['type'] ?? "text";
+    final time = DateTime.tryParse(m['time'] ?? "");
+    final timeText =
+        time != null ? DateFormat('HH:mm').format(time.add(const Duration(hours: 3))) : "";
 
-    DateTime msgTime =
-        DateTime.tryParse(m['time'] ?? "") ?? DateTime.now();
-    msgTime = msgTime.add(const Duration(hours: 3)); // +3 часа
-    final timeText = DateFormat('HH:mm').format(msgTime);
-
-    return GestureDetector(
-      onLongPress: () {
-        showModalBottomSheet(
-          context: context,
-          shape: const RoundedRectangleBorder(
-              borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
-          builder: (_) {
-            return SafeArea(
-              child: Wrap(
-                children: [
-                  if (mine && !deleted)
-                    ListTile(
-                      leading: const Icon(Icons.edit, color: Colors.teal),
-                      title: const Text("Изменить"),
-                      onTap: () {
-                        Navigator.pop(context);
-                        _editMessage(m);
-                      },
-                    ),
-                  if (mine && !deleted)
-                    ListTile(
-                      leading: const Icon(Icons.delete, color: Colors.red),
-                      title: const Text("Удалить"),
-                      onTap: () {
-                        Navigator.pop(context);
-                        _deleteMessage(m['id']);
-                      },
-                    ),
-                  ListTile(
-                    leading: const Icon(Icons.copy, color: Colors.blue),
-                    title: const Text("Скопировать"),
-                    onTap: () {
-                      Navigator.pop(context);
-                      Clipboard.setData(
-                        ClipboardData(text: m['text'] ?? ""),
-                      );
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text("Скопировано")),
-                      );
-                    },
-                  ),
-                ],
-              ),
-            );
-          },
-        );
-      },
-      child: Align(
+    if (msgType == "voice" && m['attachment'] != null) {
+      final url = "$serverBaseUrl/files/${m['attachment']}";
+      return Align(
         alignment: mine ? Alignment.centerRight : Alignment.centerLeft,
         child: Card(
-          color: mine ? Colors.teal[400] : Colors.white,
-          elevation: 4,
           margin: const EdgeInsets.symmetric(vertical: 6, horizontal: 12),
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
-          child: Padding(
-            padding: const EdgeInsets.all(12),
-            child: Column(
-              crossAxisAlignment:
-                  mine ? CrossAxisAlignment.end : CrossAxisAlignment.start,
-              children: [
-                Text(
-                  m['user'] ?? "Anon",
+          child: ListTile(
+            leading: const Icon(Icons.mic, color: Colors.teal),
+            title: Text(m['user'] ?? "Anon"),
+            subtitle: Text("Голосовое сообщение"),
+            trailing: IconButton(
+              icon: const Icon(Icons.play_arrow),
+              onPressed: () => _player.play(UrlSource(url)),
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Align(
+      alignment: mine ? Alignment.centerRight : Alignment.centerLeft,
+      child: Card(
+        color: mine ? Colors.teal[400] : Colors.white,
+        margin: const EdgeInsets.symmetric(vertical: 6, horizontal: 12),
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment:
+                mine ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+            children: [
+              Text(m['user'] ?? "Anon",
                   style: TextStyle(
-                    fontWeight: FontWeight.bold,
-                    color: mine ? Colors.white : Colors.teal,
-                  ),
-                ),
-                const SizedBox(height: 6),
-                if (deleted)
-                  const Text("[удалено]",
-                      style: TextStyle(
-                          fontStyle: FontStyle.italic, color: Colors.redAccent))
-                else
-                  Text(
-                    m['text'] ?? "",
+                      fontWeight: FontWeight.bold,
+                      color: mine ? Colors.white : Colors.teal)),
+              const SizedBox(height: 6),
+              if (deleted)
+                const Text("[удалено]",
+                    style: TextStyle(
+                        fontStyle: FontStyle.italic, color: Colors.redAccent))
+              else
+                Text(m['text'] ?? "",
                     style: TextStyle(
                         color: mine ? Colors.white : Colors.black,
-                        fontSize: 16),
-                  ),
-                const SizedBox(height: 4),
-                Text(timeText,
-                    style: TextStyle(
-                        fontSize: 11,
-                        color: mine ? Colors.white70 : Colors.black54)),
-              ],
-            ),
+                        fontSize: 16)),
+              const SizedBox(height: 4),
+              Text(timeText,
+                  style: TextStyle(
+                      fontSize: 11,
+                      color: mine ? Colors.white70 : Colors.black54)),
+            ],
           ),
         ),
       ),
@@ -432,7 +383,19 @@ class _ChatPageState extends State<ChatPage> {
 
   @override
   Widget build(BuildContext context) {
+    List<Widget> msgWidgets = [];
     DateTime? lastDate;
+    for (var m in messages) {
+      final msgTime = DateTime.tryParse(m['time'] ?? "");
+      if (msgTime != null) {
+        final localDate = DateTime(msgTime.year, msgTime.month, msgTime.day);
+        if (lastDate == null || localDate != lastDate) {
+          msgWidgets.add(_buildDateSeparator(localDate));
+          lastDate = localDate;
+        }
+      }
+      msgWidgets.add(_buildMessageTile(m));
+    }
 
     return Scaffold(
       appBar: AppBar(
@@ -446,36 +409,42 @@ class _ChatPageState extends State<ChatPage> {
       body: Column(
         children: [
           Expanded(
-            child: ListView.builder(
+            child: ListView(
               controller: _scrollCtrl,
-              itemCount: messages.length,
-              itemBuilder: (_, i) {
-                final m = messages[i];
-                DateTime msgTime =
-                    DateTime.tryParse(m['time'] ?? "") ?? DateTime.now();
-                msgTime = msgTime.add(const Duration(hours: 3));
-
-                Widget msgWidget = _buildMessageTile(m);
-
-                // если день изменился → вставляем разделитель
-                if (lastDate == null ||
-                    lastDate!.year != msgTime.year ||
-                    lastDate!.month != msgTime.month ||
-                    lastDate!.day != msgTime.day) {
-                  lastDate = msgTime;
-                  return Column(
-                    children: [
-                      _buildDayDivider(msgTime),
-                      msgWidget,
-                    ],
-                  );
-                }
-
-                return msgWidget;
-              },
+              children: msgWidgets,
             ),
           ),
-          if (_loading) const LinearProgressIndicator(),
+          if (_previewMode && _recordPath != null)
+            Container(
+              color: Colors.grey[200],
+              padding: const EdgeInsets.all(8),
+              child: Row(
+                children: [
+                  IconButton(
+                      icon: const Icon(Icons.play_arrow),
+                      onPressed: () => _player.play(DeviceFileSource(_recordPath!))),
+                  IconButton(
+                      icon: const Icon(Icons.delete, color: Colors.red),
+                      onPressed: () {
+                        setState(() {
+                          _previewMode = false;
+                          _recordPath = null;
+                        });
+                      }),
+                  IconButton(
+                      icon: const Icon(Icons.send, color: Colors.teal),
+                      onPressed: () {
+                        if (_recordPath != null) {
+                          _sendVoice(_recordPath!);
+                          setState(() {
+                            _previewMode = false;
+                            _recordPath = null;
+                          });
+                        }
+                      }),
+                ],
+              ),
+            ),
           SafeArea(
             child: Row(
               children: [
@@ -488,10 +457,20 @@ class _ChatPageState extends State<ChatPage> {
                     ),
                   ),
                 ),
-                IconButton(
-                  icon: const Icon(Icons.send, color: Colors.teal),
-                  onPressed: () => _sendMessage(_ctrl.text),
-                ),
+                if (_ctrl.text.isNotEmpty)
+                  IconButton(
+                    icon: const Icon(Icons.send, color: Colors.teal),
+                    onPressed: () => _sendMessage(_ctrl.text),
+                  )
+                else
+                  GestureDetector(
+                    onLongPressStart: (_) => _startRecording(),
+                    onLongPressEnd: (_) => _stopRecording(),
+                    child: Icon(
+                      _recording ? Icons.mic : Icons.mic_none,
+                      color: Colors.red,
+                    ),
+                  ),
               ],
             ),
           ),
