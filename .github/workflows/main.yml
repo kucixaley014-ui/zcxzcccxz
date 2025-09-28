@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Setup Flutter
@@ -27,13 +27,10 @@ jobs:
           cp -r lib app/ || true
           cp pubspec.yaml app/ || true
 
-      - name: Update Android SDK versions
+      - name: Update Android SDK
         run: |
-          sed -i 's/compileSdkVersion [0-9]\+/compileSdkVersion 35/' app/android/app/build.gradle || true
-          sed -i 's/targetSdkVersion [0-9]\+/targetSdkVersion 35/' app/android/app/build.gradle || true
-
-      - name: Ensure namespace
-        run: |
+          sed -i 's/compileSdkVersion [0-9]\+/compileSdkVersion 35/' app/android/app/build.gradle
+          sed -i 's/targetSdkVersion [0-9]\+/targetSdkVersion 35/' app/android/app/build.gradle
           if ! grep -q "namespace" app/android/app/build.gradle; then
             echo 'android { namespace "com.example.app" }' >> app/android/app/build.gradle
           fi
@@ -42,26 +39,14 @@ jobs:
         working-directory: app
         run: flutter pub get
 
-      - name: Upgrade packages to latest compatible
-        working-directory: app
-        run: flutter pub upgrade --major-versions
-
-      - name: Patch old plugins (record_android & file_picker)
+      - name: Patch old plugins
         run: |
           for f in $(find ~/.pub-cache -path "*/record_android-*/android/build.gradle" -o -path "*/file_picker-*/android/build.gradle"); do
             echo "Patching $f"
             sed -i 's/flutter\.sourceDirs/["src\/main\/java"]/g' "$f"
           done
 
-      - name: Add Android permissions
-        run: |
-          sed -i '/<application/i\    <uses-permission android:name="android.permission.INTERNET"/>' app/android/app/src/main/AndroidManifest.xml
-          sed -i '/<application/i\    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"/>' app/android/app/src/main/AndroidManifest.xml
-          sed -i '/<application/i\    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"/>' app/android/app/src/main/AndroidManifest.xml
-          sed -i '/<application/i\    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>' app/android/app/src/main/AndroidManifest.xml
-          sed -i '/<application/i\    <uses-permission android:name="android.permission.RECORD_AUDIO"/>' app/android/app/src/main/AndroidManifest.xml
-
-      - name: Build release APK
+      - name: Build APK
         working-directory: app
         run: flutter build apk --release
 
