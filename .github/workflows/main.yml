@@ -18,44 +18,54 @@ jobs:
         with:
           flutter-version: '3.24.3'
 
-      - name: Clean Flutter pub cache
+      - name: Clean pub cache
         run: rm -rf ~/.pub-cache
 
-      - name: Create Flutter project
+      - name: Copy project
         run: |
           flutter create app
           cp -r lib app/ || true
           cp pubspec.yaml app/ || true
 
-          # Добавляем разрешения: INTERNET + STORAGE + NOTIFICATIONS + RECORD_AUDIO
+      - name: Update Android SDK versions
+        run: |
+          sed -i 's/compileSdkVersion [0-9]\+/compileSdkVersion 35/' app/android/app/build.gradle || true
+          sed -i 's/targetSdkVersion [0-9]\+/targetSdkVersion 35/' app/android/app/build.gradle || true
+
+      - name: Ensure namespace
+        run: |
+          if ! grep -q "namespace" app/android/app/build.gradle; then
+            echo 'android { namespace "com.example.app" }' >> app/android/app/build.gradle
+          fi
+
+      - name: Get dependencies
+        working-directory: app
+        run: flutter pub get
+
+      - name: Upgrade packages to latest compatible
+        working-directory: app
+        run: flutter pub upgrade --major-versions
+
+      - name: Patch old plugins (record_android, file_picker)
+        run: |
+          for f in $(find ~/.pub-cache -path "*/record_android-*/android/build.gradle" -o -path "*/file_picker-*/android/build.gradle"); do
+            echo "Patching $f"
+            sed -i 's/flutter\.sourceDirs/["src\/main\/java"]/g' "$f"
+          done
+
+      - name: Add Android permissions
+        run: |
           sed -i '/<application/i\    <uses-permission android:name="android.permission.INTERNET"/>' app/android/app/src/main/AndroidManifest.xml
           sed -i '/<application/i\    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"/>' app/android/app/src/main/AndroidManifest.xml
           sed -i '/<application/i\    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"/>' app/android/app/src/main/AndroidManifest.xml
           sed -i '/<application/i\    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>' app/android/app/src/main/AndroidManifest.xml
           sed -i '/<application/i\    <uses-permission android:name="android.permission.RECORD_AUDIO"/>' app/android/app/src/main/AndroidManifest.xml
 
-          # Обновляем compileSdk и targetSdk
-          sed -i 's/compileSdkVersion [0-9]\+/compileSdkVersion 35/' app/android/app/build.gradle || true
-          sed -i 's/targetSdkVersion [0-9]\+/targetSdkVersion 35/' app/android/app/build.gradle || true
-
-          # Если Gradle без namespace, добавим
-          if ! grep -q "namespace" app/android/app/build.gradle; then
-            echo 'android { namespace "com.example.app" }' >> app/android/app/build.gradle
-          fi
-
-      - name: Get Flutter dependencies
-        working-directory: app
-        run: flutter pub get
-
-      - name: Upgrade packages automatically
-        working-directory: app
-        run: flutter pub upgrade --major-versions
-
-      - name: Build APK release
+      - name: Build release APK
         working-directory: app
         run: flutter build apk --release
 
-      - name: Upload APK artifact
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: release-apk
