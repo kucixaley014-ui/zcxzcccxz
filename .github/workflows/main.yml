@@ -12,9 +12,20 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-      - uses: subosito/flutter-action@v2
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
         with:
-          flutter-version: 'stable'
+          channel: stable
+          flutter-version: '3.10.6'
+          cache: true
+
+      - name: (Optional) Checkout specific version if needed
+        run: |
+          cd $FLUTTER_ROOT
+          git fetch --tags
+          git checkout 3.10.7
+          flutter --version
 
       - name: Install dependencies
         run: flutter pub get
@@ -23,7 +34,7 @@ jobs:
         run: |
           MANIFEST_FILE=android/app/src/main/AndroidManifest.xml
           if ! grep -q "RECORD_AUDIO" "$MANIFEST_FILE"; then
-            sed -i '0,/<application>/s//<uses-permission android:name=\"android.permission.RECORD_AUDIO\">\n<uses-permission android:name=\"android.permission.WRITE_EXTERNAL_STORAGE\"/>\n<uses-permission android:name=\"android.permission.READ_EXTERNAL_STORAGE\"/>\n\n<application>/' $MANIFEST_FILE
+            sed -i '0,/<application>/s//<uses-permission android:name=\"android.permission.RECORD_AUDIO\" \/>\\n<uses-permission android:name=\"android.permission.WRITE_EXTERNAL_STORAGE\" \/>\\n<uses-permission android:name=\"android.permission.READ_EXTERNAL_STORAGE\" \/>\\n\\n<application>/' $MANIFEST_FILE
           fi
 
       - name: Analyze
