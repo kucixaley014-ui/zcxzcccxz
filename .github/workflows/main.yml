@@ -1,57 +1,44 @@
-name: Flutter Build APK
+name: Flutter CI
 
 on:
   push:
-    branches: [ "main" ]
-  workflow_dispatch:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
 
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Flutter
-        uses: subosito/flutter-action@v2
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.24.3'
+          flutter-version: 'stable'
 
-      - name: Clean pub cache
-        run: rm -rf ~/.pub-cache
-
-      - name: Copy project
-        run: |
-          flutter create app
-          cp -r lib app/ || true
-          cp pubspec.yaml app/ || true
-
-      - name: Update Android SDK
-        run: |
-          sed -i 's/compileSdkVersion [0-9]\+/compileSdkVersion 35/' app/android/app/build.gradle
-          sed -i 's/targetSdkVersion [0-9]\+/targetSdkVersion 35/' app/android/app/build.gradle
-          if ! grep -q "namespace" app/android/app/build.gradle; then
-            echo 'android { namespace "com.example.app" }' >> app/android/app/build.gradle
-          fi
-
-      - name: Get dependencies
-        working-directory: app
+      - name: Install dependencies
         run: flutter pub get
 
-      - name: Patch old plugins
+      - name: Ensure Android permissions in manifest
         run: |
-          for f in $(find ~/.pub-cache -path "*/record_android-*/android/build.gradle" -o -path "*/file_picker-*/android/build.gradle"); do
-            echo "Patching $f"
-            sed -i 's/flutter\.sourceDirs/["src\/main\/java"]/g' "$f"
-          done
+          MANIFEST_FILE=android/app/src/main/AndroidManifest.xml
+          if ! grep -q "RECORD_AUDIO" "$MANIFEST_FILE"; then
+            sed -i '0,/<application>/s//<uses-permission android:name=\"android.permission.RECORD_AUDIO\">\n<uses-permission android:name=\"android.permission.WRITE_EXTERNAL_STORAGE\"/>\n<uses-permission android:name=\"android.permission.READ_EXTERNAL_STORAGE\"/>\n\n<application>/' $MANIFEST_FILE
+          fi
+
+      - name: Analyze
+        run: flutter analyze
+
+      - name: Run tests
+        run: flutter test --coverage
 
       - name: Build APK
-        working-directory: app
+        if: github.event_name == 'push'
         run: flutter build apk --release
 
-      - name: Upload APK
+      - name: Upload APK artifact
+        if: github.event_name == 'push'
         uses: actions/upload-artifact@v4
         with:
-          name: release-apk
-          path: app/build/app/outputs/flutter-apk/app-release.apk
+          name: app-apk
+          path: build/app/outputs/flutter-apk/app-release.apk
