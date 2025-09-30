@@ -4,7 +4,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:record/record.dart';
+import 'package:record/record.dart'; // убедись, что package:record есть в pubspec.yaml
 
 void main() {
   runApp(const MyApp());
@@ -35,7 +35,7 @@ class RecorderPage extends StatefulWidget {
 class _RecorderPageState extends State<RecorderPage> {
   final Record _recorder = Record();
   bool _isRecording = false;
-  String? _currentPath;
+  // String? _currentPath; // не используется, можно удалить
   List<FileSystemEntity> _recordings = [];
   Timer? _timer;
   int _elapsedSeconds = 0;
@@ -68,6 +68,7 @@ class _RecorderPageState extends State<RecorderPage> {
         .listSync()
         .where((f) => f.path.endsWith('.m4a') || f.path.endsWith('.wav') || f.path.endsWith('.aac'))
         .toList();
+    if (!mounted) return;
     setState(() => _recordings = files);
   }
 
@@ -88,7 +89,10 @@ class _RecorderPageState extends State<RecorderPage> {
   Future<void> _startRecording() async {
     final ok = await _requestPermissions();
     if (!ok) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Microphone permission is required')));
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Microphone permission is required')),
+      );
       return;
     }
 
@@ -107,16 +111,18 @@ class _RecorderPageState extends State<RecorderPage> {
         samplingRate: 44100,
       );
 
+      if (!mounted) return;
       setState(() {
         _isRecording = true;
-        _currentPath = path;
         _elapsedSeconds = 0;
       });
 
       _timer = Timer.periodic(const Duration(seconds: 1), (_) {
+        if (!mounted) return;
         setState(() => _elapsedSeconds++);
       });
     } catch (e) {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Ошибка старта записи: $e')));
     }
   }
@@ -124,8 +130,11 @@ class _RecorderPageState extends State<RecorderPage> {
   Future<void> _stopRecording() async {
     try {
       await _recorder.stop();
-    } catch (e) {}
+    } catch (e) {
+      debugPrint('Ошибка при остановке записи: $e');
+    }
     _timer?.cancel();
+    if (!mounted) return;
     setState(() {
       _isRecording = false;
       _elapsedSeconds = 0;
@@ -138,6 +147,7 @@ class _RecorderPageState extends State<RecorderPage> {
       await File(file.path).delete();
       await _loadRecordings();
     } catch (e) {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Ошибка при удалении: $e')));
     }
   }
@@ -188,7 +198,6 @@ class _RecorderPageState extends State<RecorderPage> {
                 ),
               ),
             ),
-
             const SizedBox(height: 16),
             const Text('Записи', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
             const SizedBox(height: 8),
@@ -209,7 +218,7 @@ class _RecorderPageState extends State<RecorderPage> {
                               IconButton(
                                 icon: const Icon(Icons.play_arrow),
                                 onPressed: () async {
-                                  // For in-app playback add just_audio; here show path
+                                  if (!mounted) return;
                                   ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Файл: ${f.path}')));
                                 },
                               ),
