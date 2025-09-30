@@ -11,20 +11,23 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
           channel: stable
-          flutter-version: '3.13.9' # можно заменить на нужную стабильную версию
+          flutter-version: '3.10.6'
           cache: true
 
       - name: Ensure Flutter project structure
         run: |
           if [ ! -d "android" ] || [ ! -d "ios" ]; then
-            echo "Создаём недостающие платформенные директории..."
+            echo "Creating missing platform folders with flutter create ..."
             flutter create .
+          else
+            echo "android/ and ios/ exist, skipping flutter create"
           fi
 
       - name: Install dependencies
@@ -34,22 +37,63 @@ jobs:
         run: |
           MANIFEST_FILE=android/app/src/main/AndroidManifest.xml
           if [ -f "$MANIFEST_FILE" ]; then
-            if ! grep -q "RECORD_AUDIO" "$MANIFEST_FILE"; then
-              sed -i '0,/<application>/s//<uses-permission android:name="android.permission.RECORD_AUDIO" \/>\
-<uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" \/>\
-<uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" \/>\
-\
-<application>/' $MANIFEST_FILE
-            fi
+            python3 - <<'PY'
+import os,sys
+mf = os.environ.get('MANIFEST_FILE')
+with open(mf, 'r', encoding='utf-8') as f:
+    txt = f.read()
+if 'RECORD_AUDIO' in txt:
+    print('RECORD_AUDIO already present in', mf)
+    sys.exit(0)
+ins = ('<uses-permission android:name="android.permission.RECORD_AUDIO" />\n'
+       '<uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />\n'
+       '<uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />\n\n')
+i = txt.find('<application')
+if i != -1:
+    txt = txt[:i] + ins + txt[i:]
+    with open(mf, 'w', encoding='utf-8') as f:
+        f.write(txt)
+    print('Inserted permissions into', mf)
+else:
+    print('<application> tag not found, skipping insertion')
+PY
+          else
+            echo "Manifest not found, skipping Android permission insertion"
           fi
 
       - name: Ensure iOS Info.plist permissions
         run: |
           INFO_PLIST=ios/Runner/Info.plist
           if [ -f "$INFO_PLIST" ]; then
-            if ! grep -q "NSMicrophoneUsageDescription" "$INFO_PLIST"; then
-              plutil -insert NSMicrophoneUsageDescription -string "Приложению нужен доступ к микрофону чтобы записывать голос" "$INFO_PLIST" || true
-            fi
+            python3 - <<'PY'
+import xml.etree.ElementTree as ET, os, sys
+p = os.environ.get('INFO_PLIST')
+tree = ET.parse(p)
+root = tree.getroot()
+# plist structure: <plist><dict>...</dict></plist>
+dict_el = root.find('dict')
+if dict_el is None:
+    print('No <dict> found in Info.plist; skipping')
+    sys.exit(0)
+# check key exists
+exists = False
+elems = list(dict_el)
+for i in range(0, len(elems)-1):
+    if elems[i].tag == 'key' and elems[i].text == 'NSMicrophoneUsageDescription':
+        exists = True
+        break
+if not exists:
+    key_el = ET.Element('key'); key_el.text = 'NSMicrophoneUsageDescription'
+    str_el = ET.Element('string'); str_el.text = 'Приложению нужен доступ к микрофону чтобы записывать голос'
+    dict_el.append(key_el)
+    dict_el.append(str_el)
+    tree.write(p, encoding='utf-8', xml_declaration=True)
+    print('Inserted NSMicrophoneUsageDescription into', p)
+else:
+    print('NSMicrophoneUsageDescription already present')
+PY
+          else
+            echo "Info.plist not found, skipping iOS permission insertion"
           fi
 
       - name: Analyze
@@ -58,7 +102,7 @@ jobs:
       - name: Run tests
         run: flutter test --coverage
 
-      - name: Build APK (release)
+      - name: Build APK
         if: github.event_name == 'push'
         run: flutter build apk --release
 
