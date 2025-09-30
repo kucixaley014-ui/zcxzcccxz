@@ -17,8 +17,8 @@ jobs:
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
+          flutter-version: '3.10.6'   # укажи тут нужную версию при необходимости
           channel: stable
-          flutter-version: '3.10.6'
           cache: true
 
       - name: Ensure Flutter project structure
@@ -37,13 +37,15 @@ jobs:
         run: |
           MANIFEST_FILE=android/app/src/main/AndroidManifest.xml
           if [ -f "$MANIFEST_FILE" ]; then
-            python3 - <<'PY'
-import os,sys
+            echo "Modifying $MANIFEST_FILE"
+            cat > /tmp/insert_permissions.py <<'PY'
+import sys, os
 mf = os.environ.get('MANIFEST_FILE')
 with open(mf, 'r', encoding='utf-8') as f:
     txt = f.read()
-if 'RECORD_AUDIO' in txt:
-    print('RECORD_AUDIO already present in', mf)
+# проверка уже добавленных разрешений
+if 'android.permission.RECORD_AUDIO' in txt:
+    print('RECORD_AUDIO already present')
     sys.exit(0)
 ins = ('<uses-permission android:name="android.permission.RECORD_AUDIO" />\n'
        '<uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />\n'
@@ -57,6 +59,7 @@ if i != -1:
 else:
     print('<application> tag not found, skipping insertion')
 PY
+            python3 /tmp/insert_permissions.py
           else
             echo "Manifest not found, skipping Android permission insertion"
           fi
@@ -65,17 +68,18 @@ PY
         run: |
           INFO_PLIST=ios/Runner/Info.plist
           if [ -f "$INFO_PLIST" ]; then
-            python3 - <<'PY'
-import xml.etree.ElementTree as ET, os, sys
+            echo "Modifying $INFO_PLIST"
+            cat > /tmp/insert_plist.py <<'PY'
+import sys, os
+from xml.etree import ElementTree as ET
 p = os.environ.get('INFO_PLIST')
 tree = ET.parse(p)
 root = tree.getroot()
-# plist structure: <plist><dict>...</dict></plist>
 dict_el = root.find('dict')
 if dict_el is None:
     print('No <dict> found in Info.plist; skipping')
     sys.exit(0)
-# check key exists
+# проверяем наличие ключа
 exists = False
 elems = list(dict_el)
 for i in range(0, len(elems)-1):
@@ -92,6 +96,7 @@ if not exists:
 else:
     print('NSMicrophoneUsageDescription already present')
 PY
+            python3 /tmp/insert_plist.py
           else
             echo "Info.plist not found, skipping iOS permission insertion"
           fi
@@ -103,11 +108,11 @@ PY
         run: flutter test --coverage
 
       - name: Build APK
-        if: github.event_name == 'push'
+        if: ${{ github.event_name == 'push' }}
         run: flutter build apk --release
 
       - name: Upload APK artifact
-        if: github.event_name == 'push'
+        if: ${{ github.event_name == 'push' }}
         uses: actions/upload-artifact@v4
         with:
           name: app-apk
