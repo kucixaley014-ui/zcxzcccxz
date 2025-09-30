@@ -11,106 +11,27 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
+      # 1. Проверяем репозиторий
+      - name: Checkout repository
         uses: actions/checkout@v4
 
+      # 2. Устанавливаем Flutter
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.10.6'   # укажи тут нужную версию при необходимости
+          flutter-version: '3.10.6'  # укажи нужную стабильную версию
           channel: stable
           cache: true
 
-      - name: Ensure Flutter project structure
-        run: |
-          if [ ! -d "android" ] || [ ! -d "ios" ]; then
-            echo "Creating missing platform folders with flutter create ..."
-            flutter create .
-          else
-            echo "android/ and ios/ exist, skipping flutter create"
-          fi
+      # 3. Делаем скрипт исполняемым
+      - name: Make ci_setup.sh executable
+        run: chmod +x ./ci_setup.sh
 
-      - name: Install dependencies
-        run: flutter pub get
+      # 4. Запускаем скрипт CI
+      - name: Run CI setup script
+        run: ./ci_setup.sh
 
-      - name: Ensure Android permissions in manifest
-        run: |
-          MANIFEST_FILE=android/app/src/main/AndroidManifest.xml
-          if [ -f "$MANIFEST_FILE" ]; then
-            echo "Modifying $MANIFEST_FILE"
-            cat > /tmp/insert_permissions.py <<'PY'
-import sys, os
-mf = os.environ.get('MANIFEST_FILE')
-with open(mf, 'r', encoding='utf-8') as f:
-    txt = f.read()
-# проверка уже добавленных разрешений
-if 'android.permission.RECORD_AUDIO' in txt:
-    print('RECORD_AUDIO already present')
-    sys.exit(0)
-ins = ('<uses-permission android:name="android.permission.RECORD_AUDIO" />\n'
-       '<uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />\n'
-       '<uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />\n\n')
-i = txt.find('<application')
-if i != -1:
-    txt = txt[:i] + ins + txt[i:]
-    with open(mf, 'w', encoding='utf-8') as f:
-        f.write(txt)
-    print('Inserted permissions into', mf)
-else:
-    print('<application> tag not found, skipping insertion')
-PY
-            python3 /tmp/insert_permissions.py
-          else
-            echo "Manifest not found, skipping Android permission insertion"
-          fi
-
-      - name: Ensure iOS Info.plist permissions
-        run: |
-          INFO_PLIST=ios/Runner/Info.plist
-          if [ -f "$INFO_PLIST" ]; then
-            echo "Modifying $INFO_PLIST"
-            cat > /tmp/insert_plist.py <<'PY'
-import sys, os
-from xml.etree import ElementTree as ET
-p = os.environ.get('INFO_PLIST')
-tree = ET.parse(p)
-root = tree.getroot()
-dict_el = root.find('dict')
-if dict_el is None:
-    print('No <dict> found in Info.plist; skipping')
-    sys.exit(0)
-# проверяем наличие ключа
-exists = False
-elems = list(dict_el)
-for i in range(0, len(elems)-1):
-    if elems[i].tag == 'key' and elems[i].text == 'NSMicrophoneUsageDescription':
-        exists = True
-        break
-if not exists:
-    key_el = ET.Element('key'); key_el.text = 'NSMicrophoneUsageDescription'
-    str_el = ET.Element('string'); str_el.text = 'Приложению нужен доступ к микрофону чтобы записывать голос'
-    dict_el.append(key_el)
-    dict_el.append(str_el)
-    tree.write(p, encoding='utf-8', xml_declaration=True)
-    print('Inserted NSMicrophoneUsageDescription into', p)
-else:
-    print('NSMicrophoneUsageDescription already present')
-PY
-            python3 /tmp/insert_plist.py
-          else
-            echo "Info.plist not found, skipping iOS permission insertion"
-          fi
-
-      - name: Analyze
-        run: flutter analyze
-
-      - name: Run tests
-        run: flutter test --coverage
-
-      - name: Build APK
-        if: ${{ github.event_name == 'push' }}
-        run: flutter build apk --release
-
+      # 5. Загружаем собранный APK как артефакт (если есть)
       - name: Upload APK artifact
         if: ${{ github.event_name == 'push' }}
         uses: actions/upload-artifact@v4
