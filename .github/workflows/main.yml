@@ -17,15 +17,15 @@ jobs:
         uses: subosito/flutter-action@v2
         with:
           channel: stable
-          flutter-version: '3.10.6'
+          flutter-version: '3.13.9' # можно заменить на нужную стабильную версию
           cache: true
 
-      - name: (Optional) Checkout specific version if needed
+      - name: Ensure Flutter project structure
         run: |
-          cd $FLUTTER_ROOT
-          git fetch --tags
-          git checkout 3.10.7
-          flutter --version
+          if [ ! -d "android" ] || [ ! -d "ios" ]; then
+            echo "Создаём недостающие платформенные директории..."
+            flutter create .
+          fi
 
       - name: Install dependencies
         run: flutter pub get
@@ -33,8 +33,23 @@ jobs:
       - name: Ensure Android permissions in manifest
         run: |
           MANIFEST_FILE=android/app/src/main/AndroidManifest.xml
-          if ! grep -q "RECORD_AUDIO" "$MANIFEST_FILE"; then
-            sed -i '0,/<application>/s//<uses-permission android:name=\"android.permission.RECORD_AUDIO\" \/>\\n<uses-permission android:name=\"android.permission.WRITE_EXTERNAL_STORAGE\" \/>\\n<uses-permission android:name=\"android.permission.READ_EXTERNAL_STORAGE\" \/>\\n\\n<application>/' $MANIFEST_FILE
+          if [ -f "$MANIFEST_FILE" ]; then
+            if ! grep -q "RECORD_AUDIO" "$MANIFEST_FILE"; then
+              sed -i '0,/<application>/s//<uses-permission android:name="android.permission.RECORD_AUDIO" \/>\
+<uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" \/>\
+<uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" \/>\
+\
+<application>/' $MANIFEST_FILE
+            fi
+          fi
+
+      - name: Ensure iOS Info.plist permissions
+        run: |
+          INFO_PLIST=ios/Runner/Info.plist
+          if [ -f "$INFO_PLIST" ]; then
+            if ! grep -q "NSMicrophoneUsageDescription" "$INFO_PLIST"; then
+              plutil -insert NSMicrophoneUsageDescription -string "Приложению нужен доступ к микрофону чтобы записывать голос" "$INFO_PLIST" || true
+            fi
           fi
 
       - name: Analyze
@@ -43,7 +58,7 @@ jobs:
       - name: Run tests
         run: flutter test --coverage
 
-      - name: Build APK
+      - name: Build APK (release)
         if: github.event_name == 'push'
         run: flutter build apk --release
 
